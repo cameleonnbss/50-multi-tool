@@ -101,7 +101,7 @@ pip3 install -r requirements.txt
 
 **4 — Run**
 ```bash
-python3 multitool_v5.py
+python3 multi-tool+osint-osint_tools_v5.py
 ```
 
 > **Optional:** Install extra dependencies for more features:
