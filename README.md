@@ -290,6 +290,8 @@ python3 multitool_v5.py
 | + 12 more | — | See module 25 |
 
 > HIBP password check uses **k-anonymity** — only 5 chars of SHA1 sent. Password never leaves your machine.
+>
+> soon gonna add an uncensored ai 
 
 ---
 
