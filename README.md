@@ -88,14 +88,14 @@ sudo dnf install python3 python3-pip git -y
 
 **2 — Clone and install**
 ```bash
-git clone https://github.com/cameleonnbss/50-multi-tool
-cd 50-multi-tool
+git clone https://github.com/cameleonnbss/camzzz-multi-tool
+cd camzzz-multi-tool
 pip install -r requirements.txt
 ```
 
 **3 — Run**
 ```bash
-python3 camzzz_v7.py
+python3 Multi-Tool.py
 ```
 
 ---
@@ -370,4 +370,4 @@ All keys are configured **once** via option **98** and auto-saved in `config.ini
 
 **camzzz**
 - Discord: `cameleonmortis`
-- GitHub: https://github.com/cameleonnbss/50-multi-tool
+- GitHub: https://github.com/cameleonnbss/50-multi-tool             
