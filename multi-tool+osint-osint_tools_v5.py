@@ -1,24 +1,155 @@
 #!/usr/bin/env python3
 # ╔══════════════════════════════════════════════════════╗
-#   CAMZZZ MULTI-TOOL V5  —  By camzzz
+#   CAMZZZ MULTI-TOOL V7  —  By camzzz
 #   50+ OSINT / Network / Phone / Mail / Breach tools
+#   90+ MODULES  --  By camzzz
 #   https://github.com/cameleonnbss/50-multi-tool
 # ╚══════════════════════════════════════════════════════╝
+#
+#  INSTALL :
+#    pkg update && pkg upgrade
+#    pkg install python python-pip
+#    pip install requests colorama Pillow
+#    python camzzz_v7.py
 
-import os, sys, platform, socket, requests, concurrent.futures
-import ssl, re, hashlib, base64, time, random, string, urllib.parse
+import os, sys, platform, socket, ssl, re, hashlib, base64
+import time, random, string, urllib.parse, subprocess, configparser, json
+import concurrent.futures
 from datetime import datetime
+
+# ── Auto-install des dependances manquantes
+def _ensure_deps():
+    import importlib, subprocess as _sp
+    deps = {"requests": "requests", "colorama": "colorama"}
+    missing = [pkg for mod, pkg in deps.items() if not importlib.util.find_spec(mod)]
+    if missing:
+        print(f"  Installation des dependances manquantes: {', '.join(missing)}")
+        _sp.check_call([sys.executable, "-m", "pip", "install"] + missing, 
+                       stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        print("  [OK] Dependances installees. Relancement...\n")
+_ensure_deps()
+
+import requests
 from colorama import Fore, Style, init
 
+# ── Pillow (optionnel)
 try:
     from PIL import Image
     from PIL.ExifTags import TAGS, GPSTAGS
     PIL_OK = True
 except ImportError:
     PIL_OK = False
+    Image = None
+    TAGS = {}
+    GPSTAGS = {}
 
 init(autoreset=True)
 SYS = platform.system().lower()
+IS_TERMUX = os.path.isdir("/data/data/com.termux") if sys.platform != "win32" else False
+
+# ══════════════════════════════════════════════════════════════
+#  SYSTEME DE CONFIG AUTOMATIQUE
+#  Fichier : config.ini (meme dossier que le script)
+#  Cree automatiquement au premier lancement
+# ══════════════════════════════════════════════════════════════
+
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+
+CONFIG_TEMPLATE = """\
+# ╔══════════════════════════════════════════════════╗
+#   CAMZZZ MULTI-TOOL V7 — Config API Keys
+#   Remplis tes cles ici, elles seront chargees
+#   automatiquement a chaque lancement.
+# ╚══════════════════════════════════════════════════╝
+
+[API_KEYS]
+# LeakCheck — Free tier 50 req/mois
+# Inscription : https://leakcheck.io
+leakcheck_key =
+
+# BreachDirectory via RapidAPI — Free tier dispo
+# Inscription : https://rapidapi.com/rohan-patra/api/breachdirectory
+breachdirectory_key =
+
+# Shodan — Free tier (scan limité)
+# Inscription : https://account.shodan.io/register
+shodan_key =
+
+# Hunter.io — Free tier 25 req/mois
+# Inscription : https://hunter.io/users/sign_up
+hunter_key =
+
+# VirusTotal — Free tier 500 req/jour
+# Inscription : https://www.virustotal.com/gui/join-us
+virustotal_key =
+
+# WormGPT — IA integree au multi-tool
+# Cle gratuite sur : https://chat.wrmgpt.com
+wormgpt_key =
+
+[SETTINGS]
+# Timeout des requetes en secondes
+timeout = 10
+# Afficher l'intro animee au lancement (true/false)
+show_intro = true
+# Langue (fr/en)
+lang = fr
+"""
+
+def load_config():
+    """Charge ou cree le fichier config.ini automatiquement."""
+    cfg = configparser.ConfigParser()
+
+    if not os.path.exists(CONFIG_FILE):
+        # Premier lancement : cree le fichier config vide
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            f.write(CONFIG_TEMPLATE)
+        print(f"\033[93m  [CONFIG]  Fichier config.ini cree : {CONFIG_FILE}\033[0m")
+        print(f"\033[93m  [CONFIG]  Remplis tes cles API dedans pour les charger automatiquement.\033[0m\n")
+        time.sleep(1.5)
+
+    cfg.read(CONFIG_FILE, encoding="utf-8")
+    return cfg
+
+def get_key(cfg, name, fallback=""):
+    """Recupere une cle API depuis la config, avec fallback."""
+    try:
+        val = cfg.get("API_KEYS", name, fallback=fallback).strip()
+        return val if val else fallback
+    except Exception:
+        return fallback
+
+def save_key(name, value):
+    """Sauvegarde une cle API dans config.ini."""
+    cfg = configparser.ConfigParser()
+    cfg.read(CONFIG_FILE, encoding="utf-8")
+    if not cfg.has_section("API_KEYS"):
+        cfg.add_section("API_KEYS")
+    cfg.set("API_KEYS", name, value)
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        cfg.write(f)
+
+def get_setting(cfg, name, fallback=""):
+    """Recupere un parametre depuis [SETTINGS]."""
+    try:
+        return cfg.get("SETTINGS", name, fallback=fallback).strip()
+    except Exception:
+        return fallback
+
+# Chargement au demarrage
+_CFG = load_config()
+
+# Cles chargees automatiquement
+LEAKCHECK_KEY   = get_key(_CFG, "leakcheck_key")
+BREACHDIR_KEY   = get_key(_CFG, "breachdirectory_key")
+SHODAN_KEY      = get_key(_CFG, "shodan_key")
+HUNTER_KEY      = get_key(_CFG, "hunter_key")
+VIRUSTOTAL_KEY  = get_key(_CFG, "virustotal_key")
+WORMGPT_KEY     = get_key(_CFG, "wormgpt_key")
+
+# Settings
+REQ_TIMEOUT  = int(get_setting(_CFG, "timeout", "10"))
+SHOW_INTRO   = get_setting(_CFG, "show_intro", "true").lower() == "true"
 
 G=Fore.GREEN;  LG=Fore.LIGHTGREEN_EX
 Y=Fore.YELLOW; LY=Fore.LIGHTYELLOW_EX
@@ -32,7 +163,7 @@ DIM=Style.DIM
 #  HELPERS
 # ──────────────────────────────────────────────
 
-def clear(): os.system("cls" if SYS=="windows" else "clear")
+def clear(): os.system("cls" if sys.platform == "win32" else "clear")
 
 def pause():
     print()
@@ -53,34 +184,34 @@ def section(t, col=LG):
     print()
 
 def spinner(label, dur=1.0, col=LG):
-    frames=["⣾","⣽","⣻","⢿","⡿","⣟","⣯","⣷"]
-    end=time.time()+dur; i=0
-    while time.time()<end:
-        sys.stdout.write(col+f"\r  {frames[i%8]}  {label}   ")
-        sys.stdout.flush(); time.sleep(0.07); i+=1
-    sys.stdout.write("\r"+" "*72+"\r"); sys.stdout.flush()
+    # ASCII fallback — compatible tous terminaux
+    frames = ["-", "\\", "|", "/"]
+    end = time.time() + dur; i = 0
+    while time.time() < end:
+        sys.stdout.write(col + f"\r  {frames[i%4]}  {label}   ")
+        sys.stdout.flush(); time.sleep(0.1); i += 1
+    sys.stdout.write("\r" + " "*72 + "\r"); sys.stdout.flush()
 
 def bar(label, steps=30, delay=0.022, col=LG, bc=G):
     for i in range(steps+1):
-        f="█"*i+"░"*(steps-i); pct=int(i/steps*100)
-        sys.stdout.write(col+f"\r  {label}  "+bc+f"[{f}]"+LW+f" {pct:3d}%")
+        f = "#"*i + "."*(steps-i); pct = int(i/steps*100)
+        sys.stdout.write(col + f"\r  {label}  " + bc + f"[{f}]" + LW + f" {pct:3d}%")
         sys.stdout.flush(); time.sleep(delay)
     print()
 
 def glitch(text, rounds=4, col=LG):
-    noise="@#$%&?!*~^<>|"
+    noise = "@#$%&?!*~^<>|"
     for _ in range(rounds):
-        g="".join(random.choice(noise) if random.random()<0.25 else ch for ch in text)
+        g = "".join(random.choice(noise) if random.random()<0.25 else ch for ch in text)
         sys.stdout.write("\r"+col+g); sys.stdout.flush(); time.sleep(0.06)
     sys.stdout.write("\r"+col+text+"\n"); sys.stdout.flush()
 
 def matrix_rain(lines=8, width=70):
-    jp="アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホ"
-    chars=jp+"01@#$%^&*<>!?"
-    cols=[G,LG,C,LC,LM,LY,Y]
+    chars = "01@#$%^&*<>!? ABCDEF"
+    cols = [G,LG,C,LC,LM,LY,Y]
     for _ in range(lines):
-        line="".join(random.choice(chars) if random.random()>0.62 else " " for _ in range(width))
-        print(random.choice(cols)+"  "+line); time.sleep(0.03)
+        line = "".join(random.choice(chars) if random.random()>0.62 else " " for _ in range(width))
+        print(random.choice(cols) + "  " + line); time.sleep(0.03)
 
 def rainbow(text):
     cols=[LR,Y,LG,LC,LM,LW,LY,LC]
@@ -98,263 +229,75 @@ def link(name, url, col=LC):
     print(col + f"  {name:<28}" + LW + f" {url}")
 
 # ──────────────────────────────────────────────
-#  ASCII ART
+#  ASCII ART / BANNER
 # ──────────────────────────────────────────────
 
 CAMZZZ_LINES = [
-    "                                                                                             l)L    t)   ##      t)                   l)L  ",
-    "                                                                                   l)  t)tTTT       t)tTTT                  l)  ",
-    "  c)CCCC a)AAAA   m)MM MMM  z)ZZZZZ z)ZZZZZ     m)MM MMM  u)   UU  l)    t)   i)      t)    o)OOO   o)OOO   l)  ",
-    " c)       a)AAA  m)  MM  MM     z)      z)     m)  MM  MM u)   UU  l)    t)   i)      t)   o)   OO o)   OO  l)  ",
-    " c)      a)   A  m)  MM  MM   z)      z)       m)  MM  MM u)   UU  l)    t)   i)      t)   o)   OO o)   OO  l)  ",
-    "  c)CCCC  a)AAAA m)      MM z)ZZZZZ z)ZZZZZ    m)      MM  u)UUU  l)LL   t)T  i)      t)T   o)OOO   o)OOO  l)LL ",
+    "   ___   _   __  __ _____  ____  ____     __  __ _   _ _  _____ ___ ",
+    "  / __| /_\\ |  \\/  |__  ||_  / |_  /    |  \\/  | | | | ||_   _|__ \\",
+    " | (__ / _ \\| |\\/| | / /  / /   / /     | |\\/| | |_| | |__| |  /_/ /",
+    "  \\___/_/ \\_\\_|  |_|/___|/___|/___|    |_|  |_|\\___/|____|_| (_)  ",
 ]
 
-BANNER = r"""
+BANNER = """
 ==================================================================================================
-/*  _____                                                      _____  */
-/* ( ___ )                                                    ( ___ ) */
-/*  |   |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|   |  */
-/*  |   |   _________ _____ ___  ____________                  |   |  */
-/*  |   |  / ___/ __ `/ __ `__ \/_  /_  /_  /                  |   |  */
-/*  |   | / /__/ /_/ / / / / / / / /_/ /_/ /_                  |   |  */
-/*  |   | \___/\__,_/_/ /_/ /_/_/___/___/___/_              __ |   |  */
-/*  |   |    ____ ___  __  __/ / /_(_)     / /_____  ____  / / |   |  */
-/*  |   |   / __ `__ \/ / / / / __/ /_____/ __/ __ \/ __ \/ /  |   |  */
-/*  |   |  / / / / / / /_/ / / /_/ /_____/ /_/ /_/ / /_/ / /   |   |  */
-/*  |   | /_/ /_/ /_/\__,_/_/\__/_/      \__/\____/\____/_/    |   |  */
-/*  |___|~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|___|  */
-/* (_____)                                                    (_____) */
+  CAMZZZ MULTI-TOOL V7  --  By camzzz  --  90+ MODULES
+  50+ OSINT / Network / Phone / Mail / Breach tools
+  github.com/cameleonnbss/50-multi-tool  --  By camzzz
 ==================================================================================================
-
-      C A M Z Z Z   M U L T I - T O O L  ·  V 5  ·  5 0 +  M O D U L E S
-      github.com/cameleonnbss/50-multi-tool  ·  By camzzz"""
-
-SKULL = r"""
-  __________________________________________________________________________
-
-                           __xxxxxxxxxxxxxxxx___.
-                      _gxXXXXXXXXXXXXXXXXXXXXXXXX!x_
-                 __x!XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX!x_
-              ,gXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXx_
-            ,gXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX!_
-          _!XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX!.
-        gXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXs
-      ,!XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX!.
-     g!XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX!
-    iXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX!
-   ,XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXx
-   !XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXx
-  XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXx
-  XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX!
-  XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX!
-  XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-  XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX!
-   XXXXXXXXXXXXXXXXXXXf~~~VXXXXXXXXXXXXXXXXXXXXXXXXXvvvvvvvvXXXXXXXXXXXXXX!
-   !XXXXXXXXXXXXXXXf         XXXXXXXXXXXXXXXXXXXXXf            XXXXXXXXXXP
-    vXXXXXXXXXXXX!            !XXXXXXXXXXXXXXXXXX!              !XXXXXXXXX
-     XXXXXXXXXXv               VXXXXXXXXXXXXXXX                !XXXXXXXX!
-     !XXXXXXXXX.                YXXXXXXXXXXXXX!                XXXXXXXXX
-      XXXXXXXXX!               ,XXXXXXXXXXXXXX                VXXXXXXX!
-      XXXXXXXX!               ,!XXXX  XXXXXXX               iXXXXXX~
-       XXXXXXXX               XXXXXX   XXXXXXXX!             xXXXXXX!
-        !XXXXXXX!xxxxxxs_____xXXXXXXX   YXXXXXX!          ,xXXXXXXXX
-         YXXXXXXXXXXXXXXXXXXXXXXXXXXX    VXXXXXXX!s. __gxx!XXXXXXXXXP
-          XXXXXXXXXXXXXXXXXXXXXXXXXX!    XXXXXXXXXXXXXXXXXXXXXXXXX!
-          XXXXXXXXXXXXXXXXXXXXXXXXXP      YXXXXXXXXXXXXXXXXXXXXXXX!
-          XXXXXXXXXXXXXXXXXXXXXXXX!   i    XXXXXXXXXXXXXXXXXXXXXXXX
-          XXXXXXXXXXXXXXXXXXXXXXXX!   XX   XXXXXXXXXXXXXXXXXXXXXXXX
-          XXXXXXXXXXXXXXXXXXXXXXXXx_ iXX_,_dXXXXXXXXXXXXXXXXXXXXXXXX
-          XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXP
-          XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX!
-           ~vXvvvvXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXf
-                    VXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXvvvvvv~
-                      XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX~
-                  _    XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXv
-                 -XX!  XXXXXXX~XXXXXXXXXXXXXXXXXXXXXX~   Xxi
-                  YXX    XXXXX XXXXXXXXXXXXXXXXXXXX       iXX
-                  !XX!   !XXX  XXXXXXXXXXXXXXXXXXXX      !XX
-                  !XXX    ~Vf  YXXXXXXXXXXXXXP YXXX     !XXX
-                  !XXX         !XXP YXXXfXXXX!  XXX     XXXV
-                  !XXX !XX           XXP  YXX!       ,.!XXX!
-                  !XXXi!XP  XX.                  ,_  !XXXXXX!
-                  iXXXx X!  XX! !Xx.  ,.     xs.,XXi !XXXXXXf
-                   XXXXXXXXXXXXXXXXX! _!XXx  dXXXXXXX.iXXXXXX
-                   VXXXXXXXXXXXXXXXXXXXXXXXxxXXXXXXXXXXXXXXX!
-                   YXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXV
-                    XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX!
-                    XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXf
-                       VXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXf
-                         VXXXXXXXXXXXXXXXXXXXXXXXXXXXXv
-                          ~vXXXXXXXXXXXXXXXXXXXXXXXf
-                              ~vXXXXXXXXXXXXXXXXv~
-                                 ~VvXXXXXXXV~~"""
+"""
 
 BOOT_FRAMES = [
-"  ╔══════════════════════════════════════╗\n  ║  [          ]  BOOTING...           ║\n  ╚══════════════════════════════════════╝",
-"  ╔══════════════════════════════════════╗\n  ║  [████      ]  LOADING MODULES...   ║\n  ╚══════════════════════════════════════╝",
-"  ╔══════════════════════════════════════╗\n  ║  [████████  ]  NETWORK READY...     ║\n  ╚══════════════════════════════════════╝",
-"  ╔══════════════════════════════════════╗\n  ║  [██████████]  ACCESS GRANTED ✓     ║\n  ║               Welcome, camzzz       ║\n  ╚══════════════════════════════════════╝",
+"  [          ]  BOOTING...",
+"  [####      ]  LOADING MODULES...",
+"  [########  ]  NETWORK READY...",
+"  [##########]  ACCESS GRANTED - Welcome, camzzz  --  90+ modules",
 ]
 
-# per-module logos (colour, art)
 LOGOS = {
-"ip": (LG, r"""
-  ██╗██████╗     ██╗      ██████╗  ██████╗ ██╗  ██╗██╗   ██╗██████╗
-  ██║██╔══██╗    ██║     ██╔═══██╗██╔═══██╗██║ ██╔╝██║   ██║██╔══██╗
-  ██║██████╔╝    ██║     ██║   ██║██║   ██║█████╔╝ ██║   ██║██████╔╝
-  ██║██╔═══╝     ██║     ██║   ██║██║   ██║██╔═██╗ ██║   ██║██╔═══╝
-  ██║██║         ███████╗╚██████╔╝╚██████╔╝██║  ██╗╚██████╔╝██║
-  ╚═╝╚═╝         ╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  By camzzz"""),
-
-"phone": (LC, r"""
-  ██████╗ ██╗  ██╗ ██████╗ ███╗   ██╗███████╗    ██╗███╗   ██╗███████╗ ██████╗
-  ██╔══██╗██║  ██║██╔═══██╗████╗  ██║██╔════╝    ██║████╗  ██║██╔════╝██╔═══██╗
-  ██████╔╝███████║██║   ██║██╔██╗ ██║█████╗      ██║██╔██╗ ██║█████╗  ██║   ██║
-  ██╔═══╝ ██╔══██║██║   ██║██║╚██╗██║██╔══╝      ██║██║╚██╗██║██╔══╝  ██║   ██║
-  ██║     ██║  ██║╚██████╔╝██║ ╚████║███████╗    ██║██║ ╚████║██║     ╚██████╔╝
-  ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝    ╚═╝╚═╝  ╚═══╝╚═╝      ╚═════╝  By camzzz"""),
-
-"mail": (LM, r"""
-  ███╗   ███╗ █████╗ ██╗██╗         ██████╗ ███████╗██╗███╗   ██╗████████╗
-  ████╗ ████║██╔══██╗██║██║         ██╔══██╗██╔════╝██║████╗  ██║╚══██╔══╝
-  ██╔████╔██║███████║██║██║         ██████╔╝█████╗  ██║██╔██╗ ██║   ██║
-  ██║╚██╔╝██║██╔══██║██║██║         ██╔══██╗██╔══╝  ██║██║╚██╗██║   ██║
-  ██║ ╚═╝ ██║██║  ██║██║███████╗    ██║  ██║███████╗██║██║ ╚████║   ██║
-  ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝╚══════╝    ╚═╝  ╚═╝╚══════╝╚═╝╚═╝  ╚═══╝   ╚═╝  By camzzz"""),
-
-"breach": (LR, r"""
-  ██████╗ ██████╗ ███████╗ █████╗  ██████╗██╗  ██╗    ██████╗ ██████╗
-  ██╔══██╗██╔══██╗██╔════╝██╔══██╗██╔════╝██║  ██║    ██╔══██╗██╔══██╗
-  ██████╔╝██████╔╝█████╗  ███████║██║     ███████║    ██║  ██║██████╔╝
-  ██╔══██╗██╔══██╗██╔══╝  ██╔══██║██║     ██╔══██║    ██║  ██║██╔══██╗
-  ██████╔╝██║  ██║███████╗██║  ██║╚██████╗██║  ██║    ██████╔╝██████╔╝
-  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝    ╚═════╝ ╚═════╝  By camzzz"""),
-
-"user": (LM, r"""
-  ██╗   ██╗███████╗███████╗██████╗ ███╗   ██╗ █████╗ ███╗   ███╗███████╗
-  ██║   ██║██╔════╝██╔════╝██╔══██╗████╗  ██║██╔══██╗████╗ ████║██╔════╝
-  ██║   ██║███████╗█████╗  ██████╔╝██╔██╗ ██║███████║██╔████╔██║█████╗
-  ██║   ██║╚════██║██╔══╝  ██╔══██╗██║╚██╗██║██╔══██║██║╚██╔╝██║██╔══╝
-  ╚██████╔╝███████║███████╗██║  ██║██║ ╚████║██║  ██║██║ ╚═╝ ██║███████╗
-   ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝  By camzzz"""),
-
-"port": (LG, r"""
-  ██████╗  ██████╗ ██████╗ ████████╗    ███████╗ ██████╗ █████╗ ███╗   ██╗
-  ██╔══██╗██╔═══██╗██╔══██╗╚══██╔══╝    ██╔════╝██╔════╝██╔══██╗████╗  ██║
-  ██████╔╝██║   ██║██████╔╝   ██║       ███████╗██║     ███████║██╔██╗ ██║
-  ██╔═══╝ ██║   ██║██╔══██╗   ██║       ╚════██║██║     ██╔══██║██║╚██╗██║
-  ██║     ╚██████╔╝██║  ██║   ██║       ███████║╚██████╗██║  ██║██║ ╚████║
-  ╚═╝      ╚═════╝ ╚═╝  ╚═╝   ╚═╝       ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝  By camzzz"""),
-
-"sub": (LC, r"""
-  ███████╗██╗   ██╗██████╗ ██████╗  ██████╗ ███╗   ███╗ █████╗ ██╗███╗   ██╗
-  ██╔════╝██║   ██║██╔══██╗██╔══██╗██╔═══██╗████╗ ████║██╔══██╗██║████╗  ██║
-  ███████╗██║   ██║██████╔╝██║  ██║██║   ██║██╔████╔██║███████║██║██╔██╗ ██║
-  ╚════██║██║   ██║██╔══██╗██║  ██║██║   ██║██║╚██╔╝██║██╔══██║██║██║╚██╗██║
-  ███████║╚██████╔╝██████╔╝██████╔╝╚██████╔╝██║ ╚═╝ ██║██║  ██║██║██║ ╚████║
-  ╚══════╝ ╚═════╝ ╚═════╝ ╚═════╝  ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝  By camzzz"""),
-
-"geo": (LY, r"""
-   ██████╗ ███████╗ ██████╗     ██╗██████╗
-  ██╔════╝ ██╔════╝██╔═══██╗    ██║██╔══██╗
-  ██║  ███╗█████╗  ██║   ██║    ██║██████╔╝
-  ██║   ██║██╔══╝  ██║   ██║    ██║██╔═══╝
-  ╚██████╔╝███████╗╚██████╔╝    ██║██║
-   ╚═════╝ ╚══════╝ ╚═════╝     ╚═╝╚═╝    By camzzz"""),
-
-"hash": (LM, r"""
-  ██╗  ██╗ █████╗ ███████╗██╗  ██╗    ████████╗ ██████╗  ██████╗ ██╗
-  ██║  ██║██╔══██╗██╔════╝██║  ██║    ╚══██╔══╝██╔═══██╗██╔═══██╗██║
-  ███████║███████║███████╗███████║       ██║   ██║   ██║██║   ██║██║
-  ██╔══██║██╔══██║╚════██║██╔══██║       ██║   ██║   ██║██║   ██║██║
-  ██║  ██║██║  ██║███████║██║  ██║       ██║   ╚██████╔╝╚██████╔╝███████╗
-  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝       ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝  By camzzz"""),
-
-"pass": (LM, r"""
-  ██████╗  █████╗ ███████╗███████╗██╗    ██╗ ██████╗ ██████╗ ██████╗
-  ██╔══██╗██╔══██╗██╔════╝██╔════╝██║    ██║██╔═══██╗██╔══██╗██╔══██╗
-  ██████╔╝███████║███████╗███████╗██║ █╗ ██║██║   ██║██████╔╝██║  ██║
-  ██╔═══╝ ██╔══██║╚════██║╚════██║██║███╗██║██║   ██║██╔══██╗██║  ██║
-  ██║     ██║  ██║███████║███████║╚███╔███╔╝╚██████╔╝██║  ██║██████╔╝
-  ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝ ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝  By camzzz"""),
-
-"cam": (LR, r"""
-  ██████╗██╗   ██╗██████╗ ██╗     ██╗ ██████╗     ██████╗  █████╗  ██████╗
-  ██╔══██╗██║   ██║██╔══██╗██║     ██║██╔════╝    ██╔════╝██╔══██╗██╔═══██╗
-  ██████╔╝██║   ██║██████╔╝██║     ██║██║         ██║     ███████║██║   ██║
-  ██╔═══╝ ██║   ██║██╔══██╗██║     ██║██║         ██║     ██╔══██║██║   ██║
-  ██║     ╚██████╔╝██████╔╝███████╗██║╚██████╗    ╚██████╗██║  ██║╚██████╔╝
-  ╚═╝      ╚═════╝ ╚═════╝ ╚══════╝╚═╝ ╚═════╝     ╚═════╝╚═╝  ╚═╝ ╚═════╝  By camzzz"""),
-
-"dork": (LY, r"""
-  ██████╗  ██████╗ ██████╗ ██╗  ██╗    ████████╗ ██████╗  ██████╗ ██╗
-  ██╔══██╗██╔═══██╗██╔══██╗██║ ██╔╝    ╚══██╔══╝██╔═══██╗██╔═══██╗██║
-  ██║  ██║██║   ██║██████╔╝█████╔╝        ██║   ██║   ██║██║   ██║██║
-  ██║  ██║██║   ██║██╔══██╗██╔═██╗        ██║   ██║   ██║██║   ██║██║
-  ██████╔╝╚██████╔╝██║  ██║██║  ██╗       ██║   ╚██████╔╝╚██████╔╝███████╗
-  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝       ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝  By camzzz"""),
+"ip":     (LG,  "  [ IP LOOKUP ]"),
+"phone":  (LC,  "  [ PHONE INFO ]"),
+"mail":   (LM,  "  [ MAIL REINT ]"),
+"breach": (LR,  "  [ BREACH DB ]"),
+"user":   (LM,  "  [ USERNAME ]"),
+"port":   (LG,  "  [ PORT SCAN ]"),
+"sub":    (LC,  "  [ SUBDOMAIN ]"),
+"geo":    (LY,  "  [ GEO IP ]"),
+"hash":   (LM,  "  [ HASH TOOL ]"),
+"pass":   (LM,  "  [ PASSWORD ]"),
+"cam":    (LR,  "  [ CAMERAS ]"),
+"dork":   (LY,  "  [ DORK GEN ]"),
 }
 
 def show_logo(key):
     clear()
-    col, art = LOGOS.get(key, (LG, ""))
-    for line in art.strip().split("\n"):
-        rainbow("  " + line.strip())
+    col, label = LOGOS.get(key, (LG, "  [ TOOL ]"))
     print()
-    print(col + "  " + "─"*70)
+    print(col + "  " + "="*60)
+    print(col + label)
+    print(col + "  " + "="*60)
     print()
 
 # ──────────────────────────────────────────────
-#  INTRO ANIMATION
+#  INTRO
 # ──────────────────────────────────────────────
 
 def intro():
+    if not SHOW_INTRO:
+        return
     clear()
-    matrix_rain(7, 72)
+    matrix_rain(4, 60)
     time.sleep(0.1); clear()
-
-    skull_cols = [LG, G, LC, LM, LY, LR, LG]
-    for col in skull_cols:
-        clear(); print(col + SKULL); time.sleep(0.14)
-
-    clear()
     for frame in BOOT_FRAMES:
-        clear(); matrix_rain(3, 72); print(LG + frame); time.sleep(0.4)
-
+        clear(); print(LG + "\n" + frame); time.sleep(0.35)
     time.sleep(0.2); clear()
-    matrix_rain(2, 72); print()
-    print(LG + "  " + "─"*68)
-    for _ in range(6):
-        noise = "@#$%camzzz&?!OSINT*~tool^<>V5"
-        line = "  " + "".join(random.choice(noise) for _ in range(52))
-        sys.stdout.write(random.choice([G,LG,C,LC,M,LM,Y]) + line + "\r")
-        sys.stdout.flush(); time.sleep(0.07)
-    glitch("         B Y   C A M Z Z Z   —   M U L T I   T O O L   V 5", 5, LG)
-    print(LG + "  " + "─"*68)
-    time.sleep(0.2); print()
-
+    print(LG + "\n  " + "="*60)
+    glitch("         B Y   C A M Z Z Z   --   V 7   --   9 0 +   M O D U L E S", 4, LG)
+    print(LG + "  " + "="*60 + "\n")
     for line in CAMZZZ_LINES:
-        rainbow(line); time.sleep(0.05)
-    time.sleep(0.3); print()
-
-    modules = [
-        ("  [ IP / GEO MODULE     ]", LG,  G),
-        ("  [ PHONE MODULE        ]", LC,  C),
-        ("  [ MAIL / EMAIL MODULE ]", LM,  M),
-        ("  [ BREACH MODULE       ]", LR,  R),
-        ("  [ OSINT MODULE        ]", LY,  Y),
-        ("  [ NETWORK MODULE      ]", LG,  G),
-        ("  [ PASSWORD MODULE     ]", LM,  M),
-        ("  [ CAMERA MODULE       ]", LR,  R),
-        ("  [ INTEL MODULE        ]", LC,  C),
-        ("  [ ALL 50+ TOOLS READY ]", LG,  G),
-    ]
-    for label, col, bc in modules:
-        bar(label, 28, 0.012, col, bc)
-
-    print(); blink("  ◈◈◈  ALL SYSTEMS ONLINE  ·  By camzzz  ·  V5  ◈◈◈", 3, LG)
-    time.sleep(0.3); clear(); matrix_rain(4, 72); time.sleep(0.2); clear()
+        rainbow("  " + line); time.sleep(0.05)
+    print(); blink("  >>> ALL SYSTEMS ONLINE  -  By camzzz  -  90+ MODULES  <<<", 3, LG)
+    time.sleep(0.4); clear()
 
 # ──────────────────────────────────────────────
 #  BANNER
@@ -363,15 +306,15 @@ def intro():
 def banner():
     print(LG + BANNER)
     for line in CAMZZZ_LINES:
-        rainbow(line)
+        rainbow("  " + line)
     print()
-    print(C + "  " + "─"*70)
-    print(C + f"  ◈  {datetime.now().strftime('%Y-%m-%d  %H:%M:%S')}  ◈  By camzzz  ◈  github.com/cameleonnbss/50-multi-tool")
-    print(C + "  " + "─"*70)
+    print(C + "  " + "-"*70)
+    print(C + f"  # {datetime.now().strftime('%Y-%m-%d  %H:%M:%S')}  #  By camzzz  #  V7  #  90+ modules")
+    print(C + "  " + "-"*70)
     print()
 
 # ──────────────────────────────────────────────
-#  ① IP INFO  (own + target + reputation)
+#  ① IP INFO
 # ──────────────────────────────────────────────
 
 def ip_info():
@@ -392,7 +335,6 @@ def ip_info():
             lat,lon = geo.get("latitude",""),geo.get("longitude","")
             if lat and lon:
                 print(); print(LG + f"  Maps   : https://maps.google.com/?q={lat},{lon}")
-                print(LG + f"  Street : https://www.openstreetmap.org/?mlat={lat}&mlon={lon}")
         except Exception as e:
             print(LR + f"  Failed: {e}")
 
@@ -404,16 +346,14 @@ def ip_info():
             geo  = requests.get(f"https://ipapi.co/{ip}/json", timeout=10).json()
             geo2 = requests.get(f"http://ip-api.com/json/{ip}", timeout=10).json()
             section(f"IP INFO — {ip}", LG)
-            fields=["country_name","region","city","postal","latitude","longitude",
-                    "timezone","org","asn","currency","languages","country_capital",
-                    "country_calling_code","network","version"]
+            fields = ["country_name","region","city","postal","latitude","longitude",
+                      "timezone","org","asn","currency","languages","network","version"]
             for f in fields:
                 v = geo.get(f) or geo2.get(f,"N/A")
                 if v and v!="N/A": row(f, v, LG, LW)
-            lat,lon=geo.get("latitude",""),geo.get("longitude","")
+            lat,lon = geo.get("latitude",""),geo.get("longitude","")
             if lat and lon:
-                print(); print(LG+f"  Google Maps : https://maps.google.com/?q={lat},{lon}")
-                print(LG+f"  OpenStreet  : https://www.openstreetmap.org/?mlat={lat}&mlon={lon}")
+                print(); print(LG + f"  Google Maps : https://maps.google.com/?q={lat},{lon}")
             section("REPUTATION LINKS", LG)
             for name,lnk in [
                 ("VirusTotal", f"https://www.virustotal.com/gui/ip-address/{ip}"),
@@ -441,7 +381,6 @@ def ip_info():
             ("MXToolbox",       f"https://mxtoolbox.com/SuperTool.aspx?action=blacklist%3a{ip}"),
             ("Spamhaus",        f"https://check.spamhaus.org/query/ip/{ip}"),
             ("IPQualityScore",  f"https://www.ipqualityscore.com/ip-reputation/proxy-vpn-bot-check/{ip}"),
-            ("ThreatCrowd",     f"https://www.threatcrowd.org/ip.php?ip={ip}"),
             ("OTX AlienVault",  f"https://otx.alienvault.com/indicator/ip/{ip}"),
             ("BinaryEdge",      f"https://app.binaryedge.io/services/query?query={qenc(ip)}"),
         ]: link(name, lnk, LC)
@@ -452,113 +391,379 @@ def ip_info():
         spinner("Scanning subnet", 1.0, LG)
         found=[]
         def chk(i):
-            ip2=f"{cidr}.{i}"
-            try: socket.setdefaulttimeout(0.4); socket.gethostbyname(ip2); return ip2
+            ip2 = f"{cidr}.{i}"
+            try:
+                s = socket.socket(); s.settimeout(0.4)
+                if s.connect_ex((ip2, 80)) == 0: return ip2
+                s.close()
             except: return None
         with concurrent.futures.ThreadPoolExecutor(max_workers=100) as ex:
-            results=list(ex.map(chk,range(1,255)))
+            results = list(ex.map(chk, range(1,255)))
         section("LIVE HOSTS", LG)
         for r in [r for r in results if r]:
-            found.append(r); print(LG+f"  [+]  {r}")
-        print(LG+f"\n  {len(found)} host(s) found.")
+            found.append(r); print(LG + f"  [+]  {r}")
+        print(LG + f"\n  {len(found)} host(s) found.")
     pause()
 
 # ──────────────────────────────────────────────
-#  ② PHONE NUMBER INFO
+#  ② TRACEROUTE (pur Python)
+# ──────────────────────────────────────────────
+
+def traceroute():
+    show_logo("geo")
+    host = input(LY + "  Host/IP > ").strip()
+    if not host: pause(); return
+    try:
+        dest_ip = socket.gethostbyname(host)
+    except Exception as e:
+        print(LR + f"  DNS failed: {e}"); pause(); return
+
+    section(f"TRACEROUTE — {host} ({dest_ip})", LY)
+
+    # Windows: utilise tracert natif
+    if sys.platform == "win32":
+        try:
+            print(LY + "  Utilisation de tracert (Windows natif)...\n")
+            result = subprocess.run(
+                ["tracert", "-d", "-h", "30", host],
+                text=True, timeout=60)
+        except Exception as ex:
+            print(LR + f"  tracert failed: {ex}")
+        pause(); return
+
+    print(LY + f"  {'HOP':<5} {'IP':<20} {'RTT':<12} {'HOSTNAME'}")
+    print(LY + "  " + "-"*60)
+
+    port = 33434
+    max_hops = 30
+    timeout = 2.0
+
+    for ttl in range(1, max_hops + 1):
+        rtt = None; recv_ip = None; hostname = "?"
+        try:
+            send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            recv_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+            send_sock.setsockopt(socket.SOL_IP, socket.IP_TTL, ttl)
+            recv_sock.settimeout(timeout)
+            start = time.time()
+            send_sock.sendto(b"", (dest_ip, port))
+            try:
+                data, addr = recv_sock.recvfrom(512)
+                recv_ip = addr[0]
+                rtt = (time.time() - start) * 1000
+                try:
+                    hostname = socket.gethostbyaddr(recv_ip)[0]
+                except: hostname = recv_ip
+            except socket.timeout:
+                recv_ip = "*"
+        except PermissionError:
+            # RAW sockets need root — fallback to subprocess ping per hop
+            try:
+                cmd = ["ping", "-c", "1", "-W", "1", "-t", str(ttl), dest_ip]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+                rtt_m = re.search(r"time=([\d.]+)", result.stdout)
+                rtt = float(rtt_m.group(1)) if rtt_m else None
+                recv_ip = dest_ip if result.returncode == 0 else "*"
+                hostname = recv_ip
+            except Exception:
+                recv_ip = "*"; hostname = "?"
+        finally:
+            try: send_sock.close()
+            except: pass
+            try: recv_sock.close()
+            except: pass
+
+        rtt_str = f"{rtt:.1f}ms" if rtt else "*"
+        col = LG if recv_ip == dest_ip else LY if recv_ip != "*" else DIM+LW
+        print(col + f"  {ttl:<5} {str(recv_ip):<20} {rtt_str:<12} {hostname}")
+
+        if recv_ip == dest_ip:
+            print(LG + f"\n  Destination reached in {ttl} hops.")
+            break
+
+    pause()
+
+# ──────────────────────────────────────────────
+#  ③ BANNER GRABBER
+# ──────────────────────────────────────────────
+
+def banner_grab():
+    show_logo("port")
+    host = input(LG + "  Host/IP > ").strip()
+    if not host: pause(); return
+    ports_input = input(LG + "  Ports (e.g. 21,22,80,443,8080) > ").strip()
+    try:
+        ports = [int(p.strip()) for p in ports_input.split(",") if p.strip()]
+    except Exception:
+        print(LR + "  Invalid ports."); pause(); return
+
+    section(f"BANNER GRABBER — {host}", LG)
+
+    for port in ports:
+        try:
+            s = socket.socket()
+            s.settimeout(3)
+            s.connect((host, port))
+            # Send a probe for HTTP-like services
+            if port in [80, 8080, 8000, 8888]:
+                s.sendall(f"HEAD / HTTP/1.0\r\nHost: {host}\r\n\r\n".encode())
+            elif port == 443:
+                s.close()
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+                s = ctx.wrap_socket(socket.socket(), server_hostname=host)
+                s.settimeout(3); s.connect((host, 443))
+                s.sendall(f"HEAD / HTTP/1.0\r\nHost: {host}\r\n\r\n".encode())
+            banner = s.recv(1024).decode(errors="replace").strip()[:200]
+            s.close()
+            print(LG + f"\n  Port {port}:")
+            for line in banner.split("\n")[:8]:
+                print(LW + f"    {line.strip()}")
+        except ConnectionRefusedError:
+            print(DIM + LW + f"  Port {port}: Closed")
+        except Exception as e:
+            print(LY + f"  Port {port}: {e}")
+
+    pause()
+
+# ──────────────────────────────────────────────
+#  ④ MAC VENDOR LOOKUP
+# ──────────────────────────────────────────────
+
+def mac_lookup():
+    show_logo("geo")
+    mac = input(LY + "  MAC address (e.g. 00:1A:2B:3C:4D:5E) > ").strip()
+    if not mac: pause(); return
+    mac_clean = mac.upper().replace("-",":").replace(".",":")
+    # Take OUI (first 6 hex chars)
+    oui = re.sub(r"[^0-9A-F]","",mac_clean)[:6]
+    spinner("Looking up MAC vendor", 1.0, LY)
+    try:
+        r = requests.get(f"https://api.macvendors.com/{qenc(mac_clean)}", timeout=8)
+        section("MAC VENDOR INFO", LY)
+        row("MAC",    mac_clean,    LY, LW)
+        row("OUI",    oui,          LY, LW)
+        if r.status_code == 200:
+            row("Vendor", r.text.strip(), LY, LG)
+        else:
+            row("Vendor", "Not found", LY, LR)
+        print()
+        link("MAClookup.app", f"https://maclookup.app/search/result?mac={qenc(mac_clean)}", LC)
+        link("Wireshark OUI", f"https://www.wireshark.org/tools/oui-lookup.html", LC)
+    except Exception as e:
+        print(LR + f"  Failed: {e}")
+    pause()
+
+# ──────────────────────────────────────────────
+#  ⑤ HTTP METHOD TESTER
+# ──────────────────────────────────────────────
+
+def http_method_tester():
+    show_logo("port")
+    url = input(LG + "  URL > ").strip()
+    if not url: pause(); return
+    if not url.startswith("http"): url = "https://" + url
+    methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS",
+               "HEAD", "TRACE", "CONNECT"]
+    section("HTTP METHOD TESTER", LG)
+    print(LG + f"  {'METHOD':<12} {'STATUS':<10} {'LENGTH':<12} {'SERVER'}")
+    print(LG + "  " + "-"*60)
+    hdrs = {"User-Agent": "Mozilla/5.0"}
+    for method in methods:
+        try:
+            r = requests.request(method, url, timeout=6, headers=hdrs,
+                                 allow_redirects=False)
+            col = LG if r.status_code < 300 else LY if r.status_code < 400 else LR
+            server = r.headers.get("Server","?")[:20]
+            danger = ""
+            if method in ["TRACE","PUT","DELETE"] and r.status_code < 400:
+                danger = LR + " [!!! DANGEROUS ENABLED]"
+            print(col + f"  {method:<12} {r.status_code:<10} {len(r.content):<12} {server}" + danger)
+        except Exception as e:
+            print(DIM + LW + f"  {method:<12} ERR: {str(e)[:40]}")
+    pause()
+
+# ──────────────────────────────────────────────
+#  ⑥ CORS CHECKER
+# ──────────────────────────────────────────────
+
+def cors_checker():
+    show_logo("port")
+    url = input(LG + "  URL > ").strip()
+    if not url: pause(); return
+    if not url.startswith("http"): url = "https://" + url
+    origins = [
+        "https://evil.com",
+        "null",
+        "https://attacker.example.com",
+        url,  # same origin
+    ]
+    section("CORS MISCONFIGURATION CHECK", LG)
+    for origin in origins:
+        try:
+            r = requests.get(url, timeout=6, headers={
+                "Origin": origin,
+                "User-Agent": "Mozilla/5.0"
+            })
+            acao = r.headers.get("Access-Control-Allow-Origin","")
+            acac = r.headers.get("Access-Control-Allow-Credentials","")
+            if acao == "*":
+                print(LR + f"  [VULN] Wildcard CORS: origin={origin} -> ACAO=*")
+            elif acao == origin and origin == "https://evil.com":
+                print(LR + f"  [VULN] Reflects evil origin! ACAO={acao}")
+            elif acao and acac.lower() == "true" and acao != url:
+                print(LR + f"  [VULN] Credentials + reflected: ACAO={acao}")
+            else:
+                col = LG if not acao else LY
+                print(col + f"  [  OK] origin={origin[:30]:<35} ACAO={acao[:30] or 'none'}")
+        except Exception as e:
+            print(LY + f"  [ERR] {origin}: {e}")
+    pause()
+
+# ──────────────────────────────────────────────
+#  ⑦ TOR CHECK
+# ──────────────────────────────────────────────
+
+def tor_check():
+    show_logo("geo")
+    ip = input(LY + "  IP to check (blank = your IP) > ").strip()
+    spinner("Checking Tor exit node status", 1.2, LY)
+    try:
+        if not ip:
+            ip = requests.get("https://api.ipify.org", timeout=8).text.strip()
+        section(f"TOR CHECK — {ip}", LY)
+        row("IP", ip, LY, LW)
+        # Method 1 : dan.me.uk
+        r = requests.get(f"https://check.torproject.org/cgi-bin/TorBulkExitList.py?ip=1.1.1.1",
+                         timeout=8)
+        exit_ips = set(r.text.strip().split("\n"))
+        is_tor = ip in exit_ips
+        row("Is Tor exit node", "YES [!]" if is_tor else "No", LY,
+            LR if is_tor else LG)
+        print()
+        # Method 2 : links
+        for name, lnk in [
+            ("TorProject check",  f"https://check.torproject.org/"),
+            ("IPQualityScore",    f"https://www.ipqualityscore.com/ip-reputation/proxy-vpn-bot-check/{ip}"),
+            ("Shodan",            f"https://www.shodan.io/host/{ip}"),
+            ("Greynoise",         f"https://viz.greynoise.io/ip/{ip}"),
+        ]: link(name, lnk, LC)
+    except Exception as e:
+        print(LR + f"  Failed: {e}")
+    pause()
+
+# ──────────────────────────────────────────────
+#  ⑧ DNS BRUTE FORCE (amélioré)
+# ──────────────────────────────────────────────
+
+# Wordlist etendue
+SUBS_EXT = [
+    "www","mail","ftp","smtp","pop","imap","webmail","cpanel","admin","api",
+    "dev","staging","test","beta","app","portal","dashboard","blog","shop",
+    "store","forum","support","help","docs","cdn","static","media","img",
+    "images","video","files","download","upload","auth","login","secure",
+    "vpn","ssh","git","gitlab","jenkins","ci","status","monitor","grafana",
+    "ns1","ns2","mx","mx1","mx2","remote","owa","exchange","autodiscover",
+    "m","mobile","panel","server","host","cloud","backup","old","new","v1",
+    "v2","api2","search","news","web","assets","s3","bucket","data","db",
+    "database","internal","intranet","extranet","private","public","corp",
+    "crm","erp","vpn2","proxy","gateway","relay","sftp","ntp","ldap","jira",
+    "confluence","wiki","redmine","phpmyadmin","mysql","postgres","elastic",
+    "kibana","grafana","prometheus","nagios","zabbix","splunk","jenkins",
+    "sonar","nexus","artifactory","registry","k8s","kube","rancher",
+    "smtp2","pop3","imap4","autodiscover","webdisk","whm","cpcalendars",
+    "cpcontacts","mail2","secure","ssl","ns3","ns4","vps","server1","server2",
+    "demo","pre","preprod","uat","qa","prod","production","mx3","email",
+    "assets2","cdn2","img2","api3","api4","graphql","rest","rpc","grpc",
+]
+
+def subdomain_finder():
+    show_logo("sub")
+    domain = input(LC + "  Domain > ").strip()
+    if not domain: pause(); return
+    bar("  Building wordlist", 20, 0.015, LC, C)
+    print(LC + f"\n  Testing {len(SUBS_EXT)} subdomains on {domain}...\n")
+    found=[]
+    def chk(sub):
+        t = f"{sub}.{domain}"
+        try: return (t, socket.gethostbyname(t))
+        except: return None
+    with concurrent.futures.ThreadPoolExecutor(max_workers=80) as ex:
+        results = list(ex.map(chk, SUBS_EXT))
+    section("FOUND SUBDOMAINS", LC)
+    for r in [r for r in results if r]:
+        sub, ip = r; found.append(sub)
+        print(LC + f"  [+]  {sub:<46}" + LW + f" -> {ip}")
+    print(LC + f"\n  {len(found)} subdomain(s) found.")
+    section("PASSIVE SEARCH LINKS", LC)
+    e = qenc(domain)
+    for name, lnk in [
+        ("crt.sh",       f"https://crt.sh/?q=%.{domain}"),
+        ("Shodan",       f"https://www.shodan.io/domain/{domain}"),
+        ("URLScan",      f"https://urlscan.io/search/#{e}"),
+        ("VirusTotal",   f"https://www.virustotal.com/gui/domain/{domain}/relations"),
+        ("SecurityTrails",f"https://securitytrails.com/domain/{domain}/subdomains"),
+        ("Censys",       f"https://search.censys.io/search?resource=hosts&q={e}"),
+    ]: link(name, lnk, LC)
+    pause()
+
+# ──────────────────────────────────────────────
+#  PHONE — base de données
 # ──────────────────────────────────────────────
 
 PHONE_DB = {
-    "+1":  {"country":"USA / Canada",       "region":"North America",  "tz":"UTC-5 to UTC-8",   "fmt":"(XXX) XXX-XXXX"},
-    "+7":  {"country":"Russia/Kazakhstan",  "region":"Eurasia",        "tz":"UTC+2 to UTC+12",  "fmt":"8 (XXX) XXX-XX-XX"},
-    "+20": {"country":"Egypt",              "region":"Africa",         "tz":"UTC+2",             "fmt":"0XX XXXX XXXX"},
-    "+27": {"country":"South Africa",       "region":"Africa",         "tz":"UTC+2",             "fmt":"0XX XXX XXXX"},
-    "+30": {"country":"Greece",             "region":"Europe",         "tz":"UTC+2",             "fmt":"XXX XXX XXXX"},
-    "+31": {"country":"Netherlands",        "region":"Europe",         "tz":"UTC+1",             "fmt":"0XX XXX XXXX"},
-    "+32": {"country":"Belgium",            "region":"Europe",         "tz":"UTC+1",             "fmt":"0XXX XX XX XX"},
-    "+33": {"country":"France",             "region":"Europe",         "tz":"UTC+1",             "fmt":"0X XX XX XX XX"},
-    "+34": {"country":"Spain",              "region":"Europe",         "tz":"UTC+1",             "fmt":"XXX XXX XXX"},
-    "+36": {"country":"Hungary",            "region":"Europe",         "tz":"UTC+1",             "fmt":"06X XXX XXXX"},
-    "+39": {"country":"Italy",              "region":"Europe",         "tz":"UTC+1",             "fmt":"XXX XXX XXXX"},
-    "+40": {"country":"Romania",            "region":"Europe",         "tz":"UTC+2",             "fmt":"0XXX XXX XXX"},
-    "+41": {"country":"Switzerland",        "region":"Europe",         "tz":"UTC+1",             "fmt":"0XX XXX XXXX"},
-    "+43": {"country":"Austria",            "region":"Europe",         "tz":"UTC+1",             "fmt":"0XXX XXXXXX"},
-    "+44": {"country":"United Kingdom",     "region":"Europe",         "tz":"UTC+0",             "fmt":"0XXXX XXXXXX"},
-    "+45": {"country":"Denmark",            "region":"Europe",         "tz":"UTC+1",             "fmt":"XX XX XX XX"},
-    "+46": {"country":"Sweden",             "region":"Europe",         "tz":"UTC+1",             "fmt":"0XX XXX XXXX"},
-    "+47": {"country":"Norway",             "region":"Europe",         "tz":"UTC+1",             "fmt":"XXX XX XXX"},
-    "+48": {"country":"Poland",             "region":"Europe",         "tz":"UTC+1",             "fmt":"XXX XXX XXX"},
-    "+49": {"country":"Germany",            "region":"Europe",         "tz":"UTC+1",             "fmt":"0XXX XXXXXXXX"},
-    "+51": {"country":"Peru",               "region":"South America",  "tz":"UTC-5",             "fmt":"XXX XXX XXX"},
-    "+52": {"country":"Mexico",             "region":"North America",  "tz":"UTC-6",             "fmt":"XXX XXX XXXX"},
-    "+54": {"country":"Argentina",          "region":"South America",  "tz":"UTC-3",             "fmt":"0XX XXXX-XXXX"},
-    "+55": {"country":"Brazil",             "region":"South America",  "tz":"UTC-3",             "fmt":"(XX) XXXXX-XXXX"},
-    "+56": {"country":"Chile",              "region":"South America",  "tz":"UTC-4",             "fmt":"X XXXX XXXX"},
-    "+57": {"country":"Colombia",           "region":"South America",  "tz":"UTC-5",             "fmt":"XXX XXX XXXX"},
-    "+60": {"country":"Malaysia",           "region":"Asia",           "tz":"UTC+8",             "fmt":"0X XXXX XXXX"},
-    "+61": {"country":"Australia",          "region":"Oceania",        "tz":"UTC+8 to +11",      "fmt":"0X XXXX XXXX"},
-    "+62": {"country":"Indonesia",          "region":"Asia",           "tz":"UTC+7 to +9",       "fmt":"0XXX XXXX XXXX"},
-    "+63": {"country":"Philippines",        "region":"Asia",           "tz":"UTC+8",             "fmt":"0XXX XXX XXXX"},
-    "+64": {"country":"New Zealand",        "region":"Oceania",        "tz":"UTC+12",            "fmt":"0X XXX XXXX"},
-    "+65": {"country":"Singapore",          "region":"Asia",           "tz":"UTC+8",             "fmt":"XXXX XXXX"},
-    "+66": {"country":"Thailand",           "region":"Asia",           "tz":"UTC+7",             "fmt":"0X XXXX XXXX"},
-    "+81": {"country":"Japan",              "region":"Asia",           "tz":"UTC+9",             "fmt":"0X XXXX XXXX"},
-    "+82": {"country":"South Korea",        "region":"Asia",           "tz":"UTC+9",             "fmt":"0X XXXX XXXX"},
-    "+84": {"country":"Vietnam",            "region":"Asia",           "tz":"UTC+7",             "fmt":"0XX XXXX XXXX"},
-    "+86": {"country":"China",              "region":"Asia",           "tz":"UTC+8",             "fmt":"0XX XXXX XXXX"},
-    "+90": {"country":"Turkey",             "region":"Europe/Asia",    "tz":"UTC+3",             "fmt":"0XXX XXX XXXX"},
-    "+91": {"country":"India",              "region":"Asia",           "tz":"UTC+5:30",          "fmt":"XXXXX XXXXX"},
-    "+92": {"country":"Pakistan",           "region":"Asia",           "tz":"UTC+5",             "fmt":"0XXX XXX XXXX"},
-    "+94": {"country":"Sri Lanka",          "region":"Asia",           "tz":"UTC+5:30",          "fmt":"0XX XXX XXXX"},
-    "+98": {"country":"Iran",               "region":"Asia",           "tz":"UTC+3:30",          "fmt":"0XXX XXX XXXX"},
-    "+212":{"country":"Morocco",            "region":"Africa",         "tz":"UTC+1",             "fmt":"0XXX XXXXXX"},
-    "+213":{"country":"Algeria",            "region":"Africa",         "tz":"UTC+1",             "fmt":"0XXX XXXXXX"},
-    "+216":{"country":"Tunisia",            "region":"Africa",         "tz":"UTC+1",             "fmt":"XX XXX XXX"},
-    "+221":{"country":"Senegal",            "region":"Africa",         "tz":"UTC+0",             "fmt":"XX XXX XX XX"},
-    "+225":{"country":"Ivory Coast",        "region":"Africa",         "tz":"UTC+0",             "fmt":"XX XX XX XX XX"},
-    "+234":{"country":"Nigeria",            "region":"Africa",         "tz":"UTC+1",             "fmt":"0XXX XXX XXXX"},
-    "+237":{"country":"Cameroon",           "region":"Africa",         "tz":"UTC+1",             "fmt":"XXXX XXXX"},
-    "+254":{"country":"Kenya",              "region":"Africa",         "tz":"UTC+3",             "fmt":"0XXX XXX XXX"},
-    "+255":{"country":"Tanzania",           "region":"Africa",         "tz":"UTC+3",             "fmt":"0XXX XXX XXX"},
-    "+256":{"country":"Uganda",             "region":"Africa",         "tz":"UTC+3",             "fmt":"0XXX XXXXXX"},
-    "+351":{"country":"Portugal",           "region":"Europe",         "tz":"UTC+0",             "fmt":"XXX XXX XXX"},
-    "+353":{"country":"Ireland",            "region":"Europe",         "tz":"UTC+0",             "fmt":"0XX XXX XXXX"},
-    "+358":{"country":"Finland",            "region":"Europe",         "tz":"UTC+2",             "fmt":"0XX XXX XXXX"},
-    "+380":{"country":"Ukraine",            "region":"Europe",         "tz":"UTC+2",             "fmt":"0XX XXX XXXX"},
-    "+381":{"country":"Serbia",             "region":"Europe",         "tz":"UTC+1",             "fmt":"0XX XXXXXXX"},
-    "+385":{"country":"Croatia",            "region":"Europe",         "tz":"UTC+1",             "fmt":"0XX XXX XXXX"},
-    "+420":{"country":"Czech Republic",     "region":"Europe",         "tz":"UTC+1",             "fmt":"XXX XXX XXX"},
-    "+421":{"country":"Slovakia",           "region":"Europe",         "tz":"UTC+1",             "fmt":"0XXX XXX XXX"},
-    "+972":{"country":"Israel",             "region":"Middle East",    "tz":"UTC+2",             "fmt":"0XX XXX XXXX"},
-    "+974":{"country":"Qatar",              "region":"Middle East",    "tz":"UTC+3",             "fmt":"XXXX XXXX"},
-    "+971":{"country":"UAE",                "region":"Middle East",    "tz":"UTC+4",             "fmt":"0X XXX XXXX"},
-    "+966":{"country":"Saudi Arabia",       "region":"Middle East",    "tz":"UTC+3",             "fmt":"0XX XXX XXXX"},
-    "+962":{"country":"Jordan",             "region":"Middle East",    "tz":"UTC+2",             "fmt":"0X XXXX XXXX"},
-    "+961":{"country":"Lebanon",            "region":"Middle East",    "tz":"UTC+2",             "fmt":"0X XXX XXX"},
-    "+880":{"country":"Bangladesh",         "region":"Asia",           "tz":"UTC+6",             "fmt":"0XXXX XXXXXX"},
-    "+852":{"country":"Hong Kong",          "region":"Asia",           "tz":"UTC+8",             "fmt":"XXXX XXXX"},
-    "+886":{"country":"Taiwan",             "region":"Asia",           "tz":"UTC+8",             "fmt":"0X XXXX XXXX"},
-    "+58": {"country":"Venezuela",          "region":"South America",  "tz":"UTC-4",             "fmt":"0XXX XXX XXXX"},
-    "+593":{"country":"Ecuador",            "region":"South America",  "tz":"UTC-5",             "fmt":"0XX XXX XXXX"},
-    "+595":{"country":"Paraguay",           "region":"South America",  "tz":"UTC-4",             "fmt":"0XXX XXX XXX"},
-    "+598":{"country":"Uruguay",            "region":"South America",  "tz":"UTC-3",             "fmt":"0X XXX XXXX"},
+    "+1":{  "country":"USA / Canada",     "region":"North America","tz":"UTC-5 to UTC-8","fmt":"(XXX) XXX-XXXX"},
+    "+7":{  "country":"Russia/Kazakhstan","region":"Eurasia",      "tz":"UTC+2 to UTC+12","fmt":"8 (XXX) XXX-XX-XX"},
+    "+33":{ "country":"France",           "region":"Europe",       "tz":"UTC+1","fmt":"0X XX XX XX XX"},
+    "+44":{ "country":"United Kingdom",   "region":"Europe",       "tz":"UTC+0","fmt":"0XXXX XXXXXX"},
+    "+49":{ "country":"Germany",          "region":"Europe",       "tz":"UTC+1","fmt":"0XXX XXXXXXXX"},
+    "+34":{ "country":"Spain",            "region":"Europe",       "tz":"UTC+1","fmt":"XXX XXX XXX"},
+    "+39":{ "country":"Italy",            "region":"Europe",       "tz":"UTC+1","fmt":"XXX XXX XXXX"},
+    "+31":{ "country":"Netherlands",      "region":"Europe",       "tz":"UTC+1","fmt":"0XX XXX XXXX"},
+    "+32":{ "country":"Belgium",          "region":"Europe",       "tz":"UTC+1","fmt":"0XXX XX XX XX"},
+    "+41":{ "country":"Switzerland",      "region":"Europe",       "tz":"UTC+1","fmt":"0XX XXX XXXX"},
+    "+46":{ "country":"Sweden",           "region":"Europe",       "tz":"UTC+1","fmt":"0XX XXX XXXX"},
+    "+47":{ "country":"Norway",           "region":"Europe",       "tz":"UTC+1","fmt":"XXX XX XXX"},
+    "+48":{ "country":"Poland",           "region":"Europe",       "tz":"UTC+1","fmt":"XXX XXX XXX"},
+    "+351":{"country":"Portugal",         "region":"Europe",       "tz":"UTC+0","fmt":"XXX XXX XXX"},
+    "+380":{"country":"Ukraine",          "region":"Europe",       "tz":"UTC+2","fmt":"0XX XXX XXXX"},
+    "+86":{ "country":"China",            "region":"Asia",         "tz":"UTC+8","fmt":"0XX XXXX XXXX"},
+    "+91":{ "country":"India",            "region":"Asia",         "tz":"UTC+5:30","fmt":"XXXXX XXXXX"},
+    "+81":{ "country":"Japan",            "region":"Asia",         "tz":"UTC+9","fmt":"0X XXXX XXXX"},
+    "+82":{ "country":"South Korea",      "region":"Asia",         "tz":"UTC+9","fmt":"0X XXXX XXXX"},
+    "+55":{ "country":"Brazil",           "region":"South America","tz":"UTC-3","fmt":"(XX) XXXXX-XXXX"},
+    "+52":{ "country":"Mexico",           "region":"North America","tz":"UTC-6","fmt":"XXX XXX XXXX"},
+    "+90":{ "country":"Turkey",           "region":"Europe/Asia",  "tz":"UTC+3","fmt":"0XXX XXX XXXX"},
+    "+212":{"country":"Morocco",          "region":"Africa",       "tz":"UTC+1","fmt":"0XXX XXXXXX"},
+    "+213":{"country":"Algeria",          "region":"Africa",       "tz":"UTC+1","fmt":"0XXX XXXXXX"},
+    "+216":{"country":"Tunisia",          "region":"Africa",       "tz":"UTC+1","fmt":"XX XXX XXX"},
+    "+234":{"country":"Nigeria",          "region":"Africa",       "tz":"UTC+1","fmt":"0XXX XXX XXXX"},
+    "+971":{"country":"UAE",              "region":"Middle East",  "tz":"UTC+4","fmt":"0X XXX XXXX"},
+    "+966":{"country":"Saudi Arabia",     "region":"Middle East",  "tz":"UTC+3","fmt":"0XX XXX XXXX"},
+    "+972":{"country":"Israel",           "region":"Middle East",  "tz":"UTC+2","fmt":"0XX XXX XXXX"},
+    "+92":{ "country":"Pakistan",         "region":"Asia",         "tz":"UTC+5","fmt":"0XXX XXX XXXX"},
+    "+62":{ "country":"Indonesia",        "region":"Asia",         "tz":"UTC+7 to +9","fmt":"0XXX XXXX XXXX"},
+    "+60":{ "country":"Malaysia",         "region":"Asia",         "tz":"UTC+8","fmt":"0X XXXX XXXX"},
+    "+63":{ "country":"Philippines",      "region":"Asia",         "tz":"UTC+8","fmt":"0XXX XXX XXXX"},
+    "+61":{ "country":"Australia",        "region":"Oceania",      "tz":"UTC+8 to +11","fmt":"0X XXXX XXXX"},
+    "+64":{ "country":"New Zealand",      "region":"Oceania",      "tz":"UTC+12","fmt":"0X XXX XXXX"},
 }
 
 FR_LINES = {
-    "06":"Mobile — Orange / SFR / Bouygues / Free",
-    "07":"Mobile — Free Mobile / MVNO",
-    "01":"Île-de-France (fixe)",
+    "06":"Mobile - Orange / SFR / Bouygues / Free",
+    "07":"Mobile - Free Mobile / MVNO",
+    "01":"Ile-de-France (fixe)",
     "02":"Nord-Ouest France (fixe)",
     "03":"Nord-Est France (fixe)",
     "04":"Sud-Est France (fixe)",
     "05":"Sud-Ouest France (fixe)",
-    "08":"Numéro spécial (surtaxé / gratuit / vert)",
+    "08":"Numero special (surtaxe / gratuit / vert)",
     "09":"VoIP / Box Internet",
 }
 
 EXPECTED_LEN = {
     "+33":11,"+44":12,"+1":11,"+49":12,"+34":11,"+39":12,
-    "+31":11,"+32":11,"+41":11,"+43":11,"+46":11,"+47":11,
-    "+48":11,"+45":11,"+30":11,"+353":11,"+358":11,
+    "+31":11,"+32":11,"+41":11,"+46":11,"+47":11,"+48":11,
     "+81":11,"+82":11,"+86":11,"+91":12,"+55":13,
 }
 
@@ -568,7 +773,6 @@ def phone_info():
     print(LC + "  2  Quick lookup links only")
     print()
     c = input(LC + "  Choice > ").strip()
-
     number = input(LC + "  Phone number (with + country code, e.g. +33612345678) > ").strip()
     if not number: pause(); return
 
@@ -580,17 +784,13 @@ def phone_info():
 
     digits  = re.sub(r"\D", "", number)
     no_plus = number.lstrip("+")
-    e       = qenc(number)
-    d       = qenc(digits)
-    e_np    = qenc(no_plus)
+    e  = qenc(number); d = qenc(digits)
 
-    # ── BASE ANALYSIS ──────────────────────────────
     section("PHONE NUMBER ANALYSIS", LC)
     row("Full number",   number,      LC, LW)
     row("Digits only",  digits,      LC, LW)
     row("Digit count",  len(digits), LC, LW)
     row("Country code", matched or "Unknown", LC, LW)
-
     if info:
         row("Country",  info["country"], LC, LG)
         row("Region",   info["region"],  LC, LG)
@@ -609,19 +809,14 @@ def phone_info():
         row("Line type",    fr_type,     LC, LG)
         is_mob = p2 in ["06","07"]
         row("Mobile", "Yes" if is_mob else "No", LC, LG if is_mob else LY)
-        if is_mob:
-            print(LC + "\n  Possible operators: Orange, SFR, Bouygues Telecom, Free Mobile, MVNO")
 
     section("VALIDITY CHECK", LC)
     exp = EXPECTED_LEN.get(matched)
     if exp:
         valid = len(digits) == exp
         row("Expected digits", exp, LC, LW)
-        row("Actual digits",   len(digits), LC, LW)
-        row("Likely valid", "Yes ✓" if valid else "No — check length", LC,
+        row("Likely valid", "Yes" if valid else "No — check length", LC,
             LG if valid else LR)
-    else:
-        row("Length check", "No rule for this country code", LC, LY)
 
     if c == "2":
         section("QUICK LOOKUP LINKS", LC)
@@ -631,103 +826,88 @@ def phone_info():
             ("NumLookup",  f"https://www.numlookup.com/?number={e}"),
             ("Sync.me",    f"https://sync.me/search/?number={e}"),
             ("ZSearcher",  f"https://zsearcher.fr/search?q={d}"),
-            ("OathNet",    f"https://oathnet.org/search?q={e}"),
         ]: link(name, lnk, LC)
         pause(); return
 
-    # ── FULL OSINT MODE ────────────────────────────
-
-    section("POTENTIAL OWNER SEARCH", LC)
-    print(LC + "  Reverse lookup services — may show name / address linked to number:")
-    print()
+    section("REVERSE LOOKUP", LC)
     for name, lnk in [
-        ("TrueCaller",          f"https://www.truecaller.com/search/fr/{d}"),
-        ("NumLookup",           f"https://www.numlookup.com/?number={e}"),
-        ("Sync.me",             f"https://sync.me/search/?number={e}"),
-        ("Spokeo",              f"https://www.spokeo.com/phone/{d}"),
-        ("WhitePages",          f"https://www.whitepages.com/phone/{d}"),
-        ("TruePeopleSearch",    f"https://www.truepeoplesearch.com/resultsphonesearch?phoneno={d}"),
-        ("FastPeopleSearch",    f"https://www.fastpeoplesearch.com/phone/{d}"),
-        ("CallerIDTest",        f"https://www.calleridtest.com/phone-lookup/{d}"),
-        ("PhoneInfoga",         f"https://www.phoneinfoga.crvx.fr/"),
-        ("AnyWho",              f"https://www.anywho.com/reverse-phone-lookup/{d}"),
-        ("NumVerify (check)",   f"https://numverify.com/"),
-        ("InternationalSkipTrace","https://www.skipease.com/"),
+        ("TrueCaller",       f"https://www.truecaller.com/search/fr/{d}"),
+        ("NumLookup",        f"https://www.numlookup.com/?number={e}"),
+        ("Sync.me",          f"https://sync.me/search/?number={e}"),
+        ("Spokeo",           f"https://www.spokeo.com/phone/{d}"),
+        ("WhitePages",       f"https://www.whitepages.com/phone/{d}"),
+        ("TruePeopleSearch", f"https://www.truepeoplesearch.com/resultsphonesearch?phoneno={d}"),
+        ("FastPeopleSearch", f"https://www.fastpeoplesearch.com/phone/{d}"),
+        ("PhoneInfoga",      f"https://www.phoneinfoga.crvx.fr/"),
     ]: link(name, lnk, LC)
 
-    section("SOCIAL MEDIA — ACCOUNT SEARCH", LC)
-    print(LC + "  Search for social accounts linked to this phone number:")
-    print()
+    section("SOCIAL MEDIA SEARCH", LC)
     for name, lnk in [
-        ("Google full",         f"https://www.google.com/search?q=%22{e}%22"),
-        ("Google no plus",      f"https://www.google.com/search?q=%22{e_np}%22"),
-        ("Google digits",       f"https://www.google.com/search?q=%22{d}%22"),
-        ("Facebook search",     f"https://www.facebook.com/search/top/?q={e}"),
-        ("Twitter/X search",    f"https://twitter.com/search?q=%22{e}%22&f=live"),
-        ("LinkedIn search",     f"https://www.linkedin.com/search/results/people/?keywords={e}"),
-        ("Instagram (Google)",  f"https://www.google.com/search?q=site:instagram.com+%22{e}%22"),
-        ("TikTok (Google)",     f"https://www.google.com/search?q=site:tiktok.com+%22{e}%22"),
-        ("Telegram (Google)",   f"https://www.google.com/search?q=site:t.me+%22{e}%22"),
-        ("WhatsApp check",      f"https://wa.me/{d}"),
-        ("Viber check",         f"https://www.google.com/search?q=viber+%22{e}%22"),
-        ("Signal (Google)",     f"https://www.google.com/search?q=signal+%22{e}%22"),
-        ("Snapchat (Google)",   f"https://www.google.com/search?q=site:snapchat.com+%22{e}%22"),
-        ("Discord (Google)",    f"https://www.google.com/search?q=site:discord.com+%22{e}%22"),
-        ("Reddit (Google)",     f"https://www.google.com/search?q=site:reddit.com+%22{e}%22"),
+        ("Google",          f"https://www.google.com/search?q=%22{e}%22"),
+        ("Facebook",        f"https://www.facebook.com/search/top/?q={e}"),
+        ("Twitter/X",       f"https://twitter.com/search?q=%22{e}%22&f=live"),
+        ("LinkedIn",        f"https://www.linkedin.com/search/results/people/?keywords={e}"),
+        ("WhatsApp check",  f"https://wa.me/{digits}"),
+        ("Telegram (Google)",f"https://www.google.com/search?q=site:t.me+%22{e}%22"),
     ]: link(name, lnk, LM)
 
-    section("DATING / CLASSIFIEDS SEARCH", LC)
-    print(LC + "  Platforms where phone numbers are sometimes publicly posted:")
-    print()
+    section("BREACH / LEAK DBs", LC)
     for name, lnk in [
-        ("Google Craigslist",   f"https://www.google.com/search?q=site:craigslist.org+%22{e}%22"),
-        ("Google Leboncoin",    f"https://www.google.com/search?q=site:leboncoin.fr+%22{e}%22"),
-        ("Google OLX",          f"https://www.google.com/search?q=site:olx.com+%22{e}%22"),
-        ("Google Badoo",        f"https://www.google.com/search?q=site:badoo.com+%22{e}%22"),
-        ("Google Tinder",       f"https://www.google.com/search?q=site:tinder.com+%22{e}%22"),
-        ("Google forums",       f"https://www.google.com/search?q=%22{e}%22+forum"),
-        ("Google comments",     f"https://www.google.com/search?q=%22{e}%22+contact"),
-    ]: link(name, lnk, LY)
-
-    section("BREACH / LEAK DATABASES", LC)
-    print(LC + "  Check if this number appeared in data leaks:")
-    print()
-    for name, lnk in [
-        ("ZSearcher.fr",        f"https://zsearcher.fr/search?q={d}"),
-        ("OathNet.org",         f"https://oathnet.org/search?q={e}"),
-        ("DeHashed",            f"https://dehashed.com/search?query={e}"),
-        ("IntelX",              f"https://intelx.io/?s={e}"),
-        ("Snusbase",            "https://snusbase.com/"),
-        ("LeakCheck",           "https://leakcheck.io/"),
-        ("HaveIBeenPwned",      "https://haveibeenpwned.com/"),
-        ("Grep.app",            f"https://grep.app/search?q={e}"),
-        ("Pastebin (Google)",   f"https://www.google.com/search?q=site:pastebin.com+%22{e}%22"),
-        ("GitHub code search",  f"https://github.com/search?q={e}&type=code"),
+        ("ZSearcher.fr",  f"https://zsearcher.fr/search?q={d}"),
+        ("OathNet.org",   f"https://oathnet.org/search?q={e}"),
+        ("DeHashed",      f"https://dehashed.com/search?query={e}"),
+        ("IntelX",        f"https://intelx.io/?s={e}"),
+        ("GitHub code",   f"https://github.com/search?q={e}&type=code"),
+        ("Pastebin",      f"https://www.google.com/search?q=site:pastebin.com+%22{e}%22"),
     ]: link(name, lnk, LR)
-
-    section("OSINT TOOLS FOR PHONE", LC)
-    print(LC + "  Dedicated phone OSINT tools:")
-    print()
-    for name, lnk in [
-        ("PhoneInfoga (tool)",  "https://github.com/sundowndev/phoneinfoga"),
-        ("Ignorant (tool)",     "https://github.com/megadose/ignorant"),
-        ("Moriarty-Project",    "https://github.com/AzizKpln/Moriarty-Project"),
-    ]: link(name, lnk, LG)
-    print()
-    print(LY + "  Tip: PhoneInfoga and Ignorant are open-source Python tools")
-    print(LY + "  you can run locally for deeper phone OSINT automation.")
-
     pause()
 
 # ──────────────────────────────────────────────
-#  ③ EMAIL / MAIL OSINT
+#  PHONE SOCIAL SCANNER
+# ──────────────────────────────────────────────
+
+def phone_social_scanner():
+    show_logo("phone")
+    number = input(LC + "  Phone number (with + country code) > ").strip()
+    if not number: pause(); return
+    digits  = re.sub(r"\D", "", number)
+    no_plus = number.lstrip("+")
+    e = qenc(number); d = qenc(digits)
+
+    section("PLATFORM SEARCH LINKS", LC)
+    platforms = [
+        ("WhatsApp",           f"https://wa.me/{digits}",                                       LG),
+        ("Telegram",           f"https://t.me/{no_plus}",                                       LC),
+        ("Signal (Google)",    f"https://www.google.com/search?q=signal+%22{e}%22",             LW),
+        ("Facebook",           f"https://www.facebook.com/search/top/?q={e}",                  LC),
+        ("Twitter/X",          f"https://twitter.com/search?q=%22{e}%22&f=live",               LC),
+        ("Instagram (Google)", f"https://www.google.com/search?q=site:instagram.com+%22{e}%22",LW),
+        ("TikTok (Google)",    f"https://www.google.com/search?q=site:tiktok.com+%22{e}%22",   LW),
+        ("LinkedIn",           f"https://www.linkedin.com/search/results/people/?keywords={e}",LC),
+        ("TrueCaller",         f"https://www.truecaller.com/search/fr/{d}",                    LY),
+        ("Sync.me",            f"https://sync.me/search/?number={e}",                          LY),
+        ("NumLookup",          f"https://www.numlookup.com/?number={e}",                       LY),
+        ("Spokeo",             f"https://www.spokeo.com/phone/{d}",                            LY),
+        ("ZSearcher.fr",       f"https://zsearcher.fr/search?q={d}",                           LR),
+        ("OathNet.org",        f"https://oathnet.org/search?q={e}",                            LR),
+        ("DeHashed",           f"https://dehashed.com/search?query={e}",                       LR),
+        ("IntelX",             f"https://intelx.io/?s={e}",                                    LR),
+        ("Google (number)",    f"https://www.google.com/search?q=%22{e}%22",                   LW),
+        ("Pastebin (Google)",  f"https://www.google.com/search?q=site:pastebin.com+%22{e}%22", LW),
+    ]
+    for name, url, col in platforms:
+        print(col + f"  {name:<28}" + LW + f" {url}")
+    pause()
+
+# ──────────────────────────────────────────────
+#  EMAIL OSINT
 # ──────────────────────────────────────────────
 
 def mail_osint():
     show_logo("mail")
     print(LM + "  1  Full email OSINT analysis")
     print(LM + "  2  Email format guesser")
-    print(LM + "  3  Email header analyser (paste raw header)")
+    print(LM + "  3  Email header analyser")
     print(LM + "  4  Disposable / temp mail checker")
     print()
     c = input(LM + "  Choice > ").strip()
@@ -737,73 +917,40 @@ def mail_osint():
         if "@" not in email: print(LR+"  Invalid."); pause(); return
         user, domain = email.split("@", 1)
         spinner("Analysing email", 1.0, LM)
-
-        md5  = hashlib.md5(email.lower().encode()).hexdigest()
-        sha1 = hashlib.sha1(email.lower().encode()).hexdigest()
-        sha256 = hashlib.sha256(email.lower().encode()).hexdigest()
-
+        md5   = hashlib.md5(email.lower().encode()).hexdigest()
+        sha1  = hashlib.sha1(email.lower().encode()).hexdigest()
+        sha256= hashlib.sha256(email.lower().encode()).hexdigest()
         section("EMAIL ANALYSIS", LM)
-        row("Email",    email,  LM, LW)
-        row("Username", user,   LM, LW)
-        row("Domain",   domain, LM, LW)
-        row("MD5",      md5,    LM, LW)
-        row("SHA1",     sha1,   LM, LW)
-        row("SHA256",   sha256, LM, LW)
-        row("Gravatar", f"https://www.gravatar.com/avatar/{md5}", LM, LC)
-
+        row("Email",   email,  LM, LW)
+        row("Username",user,   LM, LW)
+        row("Domain",  domain, LM, LW)
+        row("MD5",     md5,    LM, LW)
+        row("SHA1",    sha1,   LM, LW)
+        row("SHA256",  sha256, LM, LW)
+        row("Gravatar",f"https://www.gravatar.com/avatar/{md5}", LM, LC)
         section("DOMAIN DNS INFO", LM)
         try:
             ip = socket.gethostbyname(domain)
             row("Domain IP", ip, LM, LW)
-            try:
-                rev = socket.gethostbyaddr(ip)
-                row("Reverse DNS", rev[0], LM, LW)
-            except: pass
             for rtype in ["MX","TXT","NS"]:
                 try:
-                    r = requests.get(f"https://dns.google/resolve?name={domain}&type={rtype}",
-                                     timeout=6).json()
+                    r = requests.get(f"https://dns.google/resolve?name={domain}&type={rtype}",timeout=6).json()
                     ans = r.get("Answer",[])
-                    if ans:
-                        row(f"{rtype} record", ans[0].get("data","N/A")[:60], LM, LW)
+                    if ans: row(f"{rtype} record", ans[0].get("data","N/A")[:60], LM, LW)
                 except: pass
         except Exception as e:
             row("DNS", f"Failed: {e}", LM, LR)
-
-        section("WEB PRESENCE", LM)
-        try:
-            r = requests.get(f"https://{domain}", timeout=8,
-                             headers={"User-Agent":"Mozilla/5.0"})
-            row("HTTP Status", str(r.status_code), LM, LW)
-            row("Server",      r.headers.get("Server","N/A"), LM, LW)
-            row("X-Powered-By",r.headers.get("X-Powered-By","N/A"), LM, LW)
-        except: row("Website", "Unreachable", LM, LY)
-
         section("BREACH SEARCH LINKS", LM)
         e = qenc(email)
         for name, lnk in [
-            ("ZSearcher.fr",    f"https://zsearcher.fr/search?q={e}"),
-            ("OathNet.org",     f"https://oathnet.org/search?q={e}"),
-            ("HaveIBeenPwned",  f"https://haveibeenpwned.com/account/{e}"),
-            ("DeHashed",        f"https://dehashed.com/search?query={e}"),
-            ("IntelX",          f"https://intelx.io/?s={e}"),
-            ("LeakCheck",       "https://leakcheck.io/"),
-            ("BreachDirectory", "https://breachdirectory.org/"),
-            ("EmailRep.io",     f"https://emailrep.io/{e}"),
-            ("Grep.app",        f"https://grep.app/search?q={e}"),
-            ("GitHub search",   f"https://github.com/search?q={e}&type=code"),
-            ("Pastebin",        f"https://www.google.com/search?q=site:pastebin.com+%22{e}%22"),
-            ("Snusbase",        "https://snusbase.com/"),
-            ("Spycloud",        "https://spycloud.com/check-your-exposure/"),
-            ("Firefox Monitor", "https://monitor.firefox.com/"),
-        ]: link(name, lnk, LM)
-
-        section("SOCIAL / ACCOUNT LINKS", LM)
-        for name, lnk in [
-            ("Gravatar profile", f"https://www.gravatar.com/{md5}"),
-            ("Twitter search",   f"https://twitter.com/search?q={e}"),
-            ("LinkedIn",         f"https://www.linkedin.com/search/results/people/?keywords={qenc(user)}"),
-            ("GitHub search",    f"https://github.com/search?q={e}&type=users"),
+            ("ZSearcher.fr",   f"https://zsearcher.fr/search?q={e}"),
+            ("OathNet.org",    f"https://oathnet.org/search?q={e}"),
+            ("HaveIBeenPwned", f"https://haveibeenpwned.com/account/{e}"),
+            ("DeHashed",       f"https://dehashed.com/search?query={e}"),
+            ("IntelX",         f"https://intelx.io/?s={e}"),
+            ("EmailRep.io",    f"https://emailrep.io/{e}"),
+            ("Grep.app",       f"https://grep.app/search?q={e}"),
+            ("Pastebin",       f"https://www.google.com/search?q=site:pastebin.com+%22{e}%22"),
         ]: link(name, lnk, LM)
 
     elif c == "2":
@@ -814,20 +961,11 @@ def mail_osint():
         li = last[0]  if last  else "x"
         section("POSSIBLE EMAIL FORMATS", LM)
         fmts = [
-            f"{first}@{domain}",
-            f"{last}@{domain}",
-            f"{first}.{last}@{domain}",
-            f"{last}.{first}@{domain}",
-            f"{fi}{last}@{domain}",
-            f"{first}{li}@{domain}",
-            f"{fi}.{last}@{domain}",
-            f"{first}_{last}@{domain}",
-            f"{last}_{first}@{domain}",
-            f"{first}{last}@{domain}",
-            f"{last}{first}@{domain}",
-            f"{fi}{li}@{domain}",
-            f"{first[0:2]}{last}@{domain}",
-            f"{first}.{last[0]}@{domain}",
+            f"{first}@{domain}", f"{last}@{domain}",
+            f"{first}.{last}@{domain}", f"{last}.{first}@{domain}",
+            f"{fi}{last}@{domain}", f"{first}{li}@{domain}",
+            f"{fi}.{last}@{domain}", f"{first}_{last}@{domain}",
+            f"{first}{last}@{domain}", f"{last}{first}@{domain}",
         ]
         for fmt in fmts:
             md5 = hashlib.md5(fmt.encode()).hexdigest()
@@ -843,17 +981,11 @@ def mail_osint():
         header = "\n".join(lines)
         section("HEADER ANALYSIS", LM)
         patterns = {
-            "From":         r"From:(.+)",
-            "To":           r"To:(.+)",
-            "Subject":      r"Subject:(.+)",
-            "Date":         r"Date:(.+)",
-            "Message-ID":   r"Message-ID:(.+)",
-            "Return-Path":  r"Return-Path:(.+)",
-            "Reply-To":     r"Reply-To:(.+)",
-            "X-Mailer":     r"X-Mailer:(.+)",
+            "From": r"From:(.+)", "To": r"To:(.+)", "Subject": r"Subject:(.+)",
+            "Date": r"Date:(.+)", "Return-Path": r"Return-Path:(.+)",
+            "Reply-To": r"Reply-To:(.+)", "X-Mailer": r"X-Mailer:(.+)",
             "X-Originating-IP": r"X-Originating-IP:(.+)",
-            "DKIM-Signature":r"DKIM-Signature:(.+)",
-            "Received-SPF": r"Received-SPF:(.+)",
+            "DKIM-Signature": r"DKIM-Signature:(.+)",
         }
         for label, pat in patterns.items():
             m = re.search(pat, header, re.IGNORECASE)
@@ -870,79 +1002,355 @@ def mail_osint():
         if "@" not in email: print(LR+"  Invalid."); pause(); return
         domain = email.split("@")[1].lower()
         spinner("Checking domain", 0.8, LM)
-        section("DISPOSABLE MAIL CHECK", LM)
         disposable_domains = [
             "mailinator.com","guerrillamail.com","10minutemail.com","temp-mail.org",
-            "throwam.com","yopmail.com","sharklasers.com","guerrillamailblock.com",
-            "grr.la","guerrillamail.info","guerrillamail.biz","guerrillamail.de",
-            "guerrillamail.net","guerrillamail.org","spam4.me","trashmail.com",
-            "trashmail.at","trashmail.io","trashmail.me","trashmail.net",
-            "dispostable.com","discard.email","maildrop.cc","mailnull.com",
-            "spamgourmet.com","spamgourmet.net","spamgourmet.org","spamex.com",
-            "spamfree24.org","spamfree24.de","spamfree24.info","spamfree24.biz",
-            "tempail.com","tempmail.com","tempmail.de","tempr.email",
-            "fakeinbox.com","fakeinbox.net","fakeinbox.org","mailnesia.com",
-            "mailnull.com","mailsac.com","33mail.com","mintemail.com",
+            "throwam.com","yopmail.com","sharklasers.com","trashmail.com","maildrop.cc",
+            "tempmail.com","fakeinbox.com","mailnesia.com","mailsac.com","33mail.com",
         ]
         is_disp = domain in disposable_domains
+        section("DISPOSABLE MAIL CHECK", LM)
         row("Domain",    domain,     LM, LW)
-        row("Disposable","Yes — likely a temp mail provider" if is_disp
-            else "Not in local list (may still be temp)", LM,
+        row("Disposable","Yes - likely temp mail" if is_disp else "Not in local list", LM,
             LR if is_disp else LG)
-        print()
-        print(LM + "  Online checkers:")
-        for name, lnk in [
-            ("DisposableMailCheck", f"https://www.dispostable.com/"),
-            ("MailChecker API",     f"https://api.mailchecker.io/v4/check/{qenc(email)}"),
-            ("Kickbox",            f"https://kickbox.com/"),
-        ]: link(name, lnk, LM)
     pause()
 
 # ──────────────────────────────────────────────
-#  ④ DATA BREACH SEARCH ENGINE
+#  EMAIL ACCOUNT CHECKER
 # ──────────────────────────────────────────────
 
-def breach_engine():
+def email_account_checker():
+    show_logo("mail")
+    print(LM + "  Checks platforms for an account via password-reset endpoints.\n")
+    email = input(LM + "  Email address > ").strip()
+    if "@" not in email: print(LR + "  Invalid email."); pause(); return
+    sites = {
+        "Facebook":  "https://www.facebook.com/recover/initiate",
+        "Twitter":   "https://twitter.com/account/begin_password_reset",
+        "Instagram": "https://www.instagram.com/accounts/password/reset/",
+        "Snapchat":  "https://accounts.snapchat.com/accounts/password/reset",
+        "Pinterest": "https://www.pinterest.com/reset/",
+        "TikTok":    "https://www.tiktok.com/login/forgot-password",
+        "Reddit":    "https://www.reddit.com/password",
+        "GitHub":    "https://github.com/password_reset",
+        "LinkedIn":  "https://www.linkedin.com/uas/request-password-reset",
+        "Discord":   "https://discord.com/api/v9/auth/forgot",
+        "Spotify":   "https://accounts.spotify.com/en/password-reset",
+        "Netflix":   "https://www.netflix.com/password",
+        "Amazon":    "https://www.amazon.com/ap/forgotpassword",
+        "Microsoft": "https://account.live.com/password/reset",
+        "Dropbox":   "https://www.dropbox.com/forgot",
+        "Twitch":    "https://www.twitch.tv/user/password_reset",
+        "Steam":     "https://store.steampowered.com/login/forgotpassword",
+    }
+    bar("  Scanning platforms", 30, 0.012, LM, M)
+    print(LM + f"\n  Checking {len(sites)} platforms for '{email}'...\n")
+    found = []
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    for site, reset_url in sites.items():
+        try:
+            resp = requests.post(reset_url, data={"email": email},
+                                 timeout=5, headers=hdrs, allow_redirects=True)
+            text = resp.text.lower()
+            keywords = ["sent","email","recovery","reset","check your email","verify","we've sent"]
+            if any(k in text for k in keywords):
+                print(LG + f"  [+]  {site:<20}" + LW + " Account likely exists")
+                found.append(site)
+            else:
+                print(DIM + LW + f"  [ ]  {site}")
+        except Exception:
+            print(DIM + LW + f"  [?]  {site}")
+    section(f"RESULTS - {len(found)} ACCOUNT(S) FOUND", LM)
+    if found:
+        for s in found: print(LG + f"  [+]  {s}")
+    else:
+        print(LM + "  No accounts found via password-reset method.")
+    pause()
+
+# ──────────────────────────────────────────────
+#  BREACH ENGINE
+# ──────────────────────────────────────────────
+
+def xposedornot():
+    """XposedOrNot API — gratuite, sans clé, résultats directs."""
     show_logo("breach")
-    print(LW + "  All services below are legal publicly accessible breach databases.")
-    print()
-    print(LR + "  1  ZSearcher.fr          French specialised breach engine")
-    print(LR + "  2  OathNet.org           International breach engine")
-    print(LR + "  3  HaveIBeenPwned        International — email check via API")
-    print(LR + "  4  ALL breach links      Generate all links for any query")
-    print(LR + "  5  Password HIBP check   k-anonymity — nothing sent to server")
-    print(LR + "  6  Domain breach search  All breaches linked to a domain")
-    print(LR + "  7  Username breach scan  Check username across breach DBs")
-    print()
+    XON_BASE = "https://api.xposedornot.com/v1"
+
+    print(LR + "  XposedOrNot API  —  Gratuite  —  Sans clé  —  Résultats directs\n")
+    print(LR + "  1  Check email (breaches)\n"
+               "  2  Breach analytics (stats détaillées)\n"
+               "  3  Check pastes (email dans des pastes)\n"
+               "  4  Check tout (breach + pastes)\n"
+               "  5  Liste de toutes les breaches connues\n"
+               "  6  Infos sur une breach spécifique\n"
+               "  7  Check password (k-anonymity)\n")
     c = input(LC + "  Choice > ").strip()
 
     if c == "1":
-        q = input(LC + "  Search (email / phone / username) > ").strip()
-        e = qenc(q)
+        email = input(LC + "  Email > ").strip()
+        if "@" not in email: print(LR+"  Email invalide."); pause(); return
+        spinner(f"Interrogation XposedOrNot pour {email}", 1.2, LR)
+        try:
+            r = requests.get(f"{XON_BASE}/check-email/{qenc(email)}",
+                             timeout=10, headers={"User-Agent": "osint-camzzz-v6"})
+            section("XPOSEDORNOT — EMAIL CHECK", LR)
+            row("Email",   email,          LR, LW)
+            row("Statut HTTP", str(r.status_code), LR, LW)
+            if r.status_code == 200:
+                data = r.json()
+                breaches = data.get("breaches", [])
+                if breaches:
+                    flat = [b[0] if isinstance(b, list) else str(b) for b in breaches]
+                    section(f"TROUVE DANS {len(flat)} BREACH(ES)", LR)
+                    for b in flat:
+                        print(LR + f"  [!]  {b}")
+                else:
+                    print(LG + "  [OK]  Aucune breach trouvee.")
+            elif r.status_code == 404:
+                print(LG + "  [OK]  Email non trouvé dans les breaches connues.")
+            elif r.status_code == 429:
+                print(LY + "  [!!]  Rate limit atteint (100 req/jour par IP). Réessaie demain.")
+            else:
+                print(LY + f"  Réponse inattendue: {r.status_code}  {r.text[:100]}")
+        except Exception as ex:
+            print(LR + f"  Erreur: {ex}")
+
+    elif c == "2":
+        email = input(LC + "  Email > ").strip()
+        if "@" not in email: print(LR+"  Email invalide."); pause(); return
+        spinner(f"Récupération des analytics pour {email}", 1.5, LR)
+        try:
+            r = requests.get(f"{XON_BASE}/breach-analytics?email={qenc(email)}",
+                             timeout=12, headers={"User-Agent": "osint-camzzz-v6"})
+            section("XPOSEDORNOT — BREACH ANALYTICS", LR)
+            row("Email", email, LR, LW)
+            if r.status_code == 200:
+                data = r.json()
+
+                # Infos générales
+                xposed = data.get("xposed_data", {})
+                metrics = data.get("metrics", {})
+                breaches_list = data.get("BreachesSummary", {})
+
+                if metrics:
+                    section("STATISTIQUES", LR)
+                    row("Breaches trouvées",  metrics.get("breaches_count", "N/A"), LR, LW)
+                    row("Pastes trouvés",     metrics.get("pastes_count",   "N/A"), LR, LW)
+                    row("Mots de passe expo.",metrics.get("passwords_count","N/A"), LR, LW)
+
+                if xposed:
+                    section("TYPES DE DONNÉES EXPOSÉES", LR)
+                    for category, items in xposed.items():
+                        if items:
+                            label = category.replace("_", " ").title()
+                            val   = ", ".join(items) if isinstance(items, list) else str(items)
+                            print(LR + f"  {label:<28}" + LW + f" {val[:70]}")
+
+                if breaches_list:
+                    section("BREACHES DÉTAILLÉES", LR)
+                    for bname, binfo in breaches_list.items():
+                        if isinstance(binfo, dict):
+                            date   = binfo.get("date", "?")
+                            pwd    = binfo.get("password", False)
+                            fields = binfo.get("xposed_data", [])
+                            pwd_flag = LR+"[PWD]" if pwd else LG+"[   ]"
+                            print(pwd_flag + LW + f"  {bname:<25}" +
+                                  LC + f" {date}  " + LY + f"{str(fields)[:50]}")
+                        else:
+                            print(LR + f"  [!]  {bname}: {str(binfo)[:60]}")
+
+            elif r.status_code == 404:
+                print(LG + "  [OK]  Aucune breach trouvée pour cet email.")
+            elif r.status_code == 429:
+                print(LY + "  [!!]  Rate limit (100 req/jour). Réessaie demain.")
+            else:
+                print(LY + f"  HTTP {r.status_code}: {r.text[:150]}")
+        except Exception as ex:
+            print(LR + f"  Erreur: {ex}")
+
+    elif c == "3":
+        email = input(LC + "  Email > ").strip()
+        if "@" not in email: print(LR+"  Email invalide."); pause(); return
+        spinner(f"Recherche pastes pour {email}", 1.0, LR)
+        try:
+            r = requests.get(f"{XON_BASE}/pastes?email={qenc(email)}",
+                             timeout=10, headers={"User-Agent": "osint-camzzz-v6"})
+            section("XPOSEDORNOT — PASTES CHECK", LR)
+            row("Email", email, LR, LW)
+            if r.status_code == 200:
+                data = r.json()
+                pastes = data.get("pastes", [])
+                if pastes:
+                    section(f"TROUVE DANS {len(pastes)} PASTE(S)", LR)
+                    for p in pastes:
+                        if isinstance(p, dict):
+                            src  = p.get("source", "?")
+                            pid  = p.get("id", "?")
+                            date = p.get("date", "?")
+                            print(LR + f"  [!]  {src:<15}" + LW + f" {pid}  " + LY + f"{date}")
+                        else:
+                            print(LR + f"  [!]  {p}")
+                else:
+                    print(LG + "  [OK]  Aucun paste trouvé.")
+            elif r.status_code == 404:
+                print(LG + "  [OK]  Email non trouvé dans des pastes connus.")
+            elif r.status_code == 429:
+                print(LY + "  [!!]  Rate limit (100 req/jour). Réessaie demain.")
+            else:
+                print(LY + f"  HTTP {r.status_code}: {r.text[:150]}")
+        except Exception as ex:
+            print(LR + f"  Erreur: {ex}")
+
+    elif c == "4":
+        email = input(LC + "  Email > ").strip()
+        if "@" not in email: print(LR+"  Email invalide."); pause(); return
+        spinner(f"Scan complet XposedOrNot pour {email}", 1.8, LR)
+
+        section("XPOSEDORNOT — SCAN COMPLET", LR)
+        row("Email", email, LR, LW)
+
+        # -- check-email
+        try:
+            r1 = requests.get(f"{XON_BASE}/check-email/{qenc(email)}",
+                              timeout=10, headers={"User-Agent": "osint-camzzz-v6"})
+            if r1.status_code == 200:
+                data1 = r1.json()
+                breaches = data1.get("breaches", [])
+                flat = [b[0] if isinstance(b, list) else str(b) for b in breaches]
+                print(LR + f"\n  Breaches: {len(flat)}")
+                for b in flat: print(LR + f"    [!]  {b}")
+            elif r1.status_code == 404:
+                print(LG + "\n  Breaches: 0 (email propre)")
+            else:
+                print(LY + f"\n  Breaches: HTTP {r1.status_code}")
+        except Exception as ex:
+            print(LR + f"\n  Breaches: Erreur — {ex}")
+
+        time.sleep(0.6)  # respecter le rate limit (2 req/s)
+
+        # -- pastes
+        try:
+            r2 = requests.get(f"{XON_BASE}/pastes?email={qenc(email)}",
+                              timeout=10, headers={"User-Agent": "osint-camzzz-v6"})
+            if r2.status_code == 200:
+                data2 = r2.json()
+                pastes = data2.get("pastes", [])
+                print(LR + f"\n  Pastes: {len(pastes)}")
+                for p in pastes[:5]:
+                    src = p.get("source","?") if isinstance(p,dict) else str(p)
+                    print(LR + f"    [!]  {src}")
+            elif r2.status_code == 404:
+                print(LG + "\n  Pastes: 0 (aucun paste)")
+            elif r2.status_code == 429:
+                print(LY + "\n  Pastes: Rate limit atteint")
+            else:
+                print(LY + f"\n  Pastes: HTTP {r2.status_code}")
+        except Exception as ex:
+            print(LR + f"\n  Pastes: Erreur — {ex}")
+
+    elif c == "5":
+        spinner("Récupération de la liste des breaches", 1.5, LR)
+        try:
+            r = requests.get(f"{XON_BASE}/breaches",
+                             timeout=15, headers={"User-Agent": "osint-camzzz-v6"})
+            section("TOUTES LES BREACHES CONNUES", LR)
+            if r.status_code == 200:
+                data = r.json()
+                breaches = data.get("breaches", data) if isinstance(data, dict) else data
+                if isinstance(breaches, list):
+                    print(LR + f"  {len(breaches)} breaches indexées\n")
+                    for b in breaches[:50]:
+                        if isinstance(b, dict):
+                            name  = b.get("breachID", b.get("name", "?"))
+                            date  = b.get("addedDate", b.get("date", "?"))
+                            count = b.get("pwnCount", "?")
+                            print(LR + f"  {name:<30}" + LW + f" {date}  " +
+                                  LY + f"{count:,}" if isinstance(count,int) else
+                                  LR + f"  {name:<30}" + LW + f" {date}  " + LY + str(count))
+                        else:
+                            print(LR + f"  {b}")
+                    if len(breaches) > 50:
+                        print(LY + f"\n  ... et {len(breaches)-50} de plus.")
+                else:
+                    print(LW + str(data)[:500])
+            else:
+                print(LY + f"  HTTP {r.status_code}: {r.text[:150]}")
+        except Exception as ex:
+            print(LR + f"  Erreur: {ex}")
+
+    elif c == "6":
+        breach_name = input(LC + "  Nom de la breach (ex: Adobe) > ").strip()
+        spinner(f"Récupération infos sur {breach_name}", 1.0, LR)
+        try:
+            r = requests.get(f"{XON_BASE}/breaches/{qenc(breach_name)}",
+                             timeout=10, headers={"User-Agent": "osint-camzzz-v6"})
+            section(f"BREACH INFO — {breach_name}", LR)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        if v is not None:
+                            row(str(k), str(v)[:70], LR, LW)
+                else:
+                    print(LW + str(data)[:300])
+            elif r.status_code == 404:
+                print(LY + f"  Breach '{breach_name}' non trouvée dans la base.")
+                print(LY +  "  Conseil: utilise l'option 5 pour voir les noms exacts.")
+            else:
+                print(LY + f"  HTTP {r.status_code}: {r.text[:150]}")
+        except Exception as ex:
+            print(LR + f"  Erreur: {ex}")
+
+    elif c == "7":
+        pwd = input(LC + "  Mot de passe à vérifier > ").strip()
+        if not pwd: pause(); return
+        sha1   = hashlib.sha1(pwd.encode()).hexdigest().upper()
+        prefix = sha1[:5]; suffix = sha1[5:]
+        spinner("Vérification k-anonymity (HIBP PwnedPasswords)", 1.0, LR)
+        try:
+            r = requests.get(f"https://api.pwnedpasswords.com/range/{prefix}", timeout=8)
+            found = False
+            for line in r.text.splitlines():
+                h, count = line.split(":")
+                if h == suffix:
+                    print(LR + f"\n  [!!!]  Trouvé {count} fois dans des leaks!")
+                    print(LR +  "         Change ce mot de passe immédiatement.")
+                    found = True; break
+            if not found: print(LG + "\n  [OK]  Non trouvé dans HIBP.")
+            print(DIM + "\n  Seuls 5 chars du hash SHA1 sont envoyés — MDP jamais transmis.")
+        except Exception as ex:
+            print(LR + f"  Erreur: {ex}")
+
+    print()
+    print(LC + "  XposedOrNot : https://xposedornot.com  |  API : https://api.xposedornot.com")
+    print(LC + "  Limite : 2 req/s, 100 req/jour par IP  —  Aucune cle requise")
+    pause()
+
+
+def breach_engine():
+    show_logo("breach")
+    print(LR + "  1  ZSearcher.fr\n  2  OathNet.org\n  3  HaveIBeenPwned (email)\n"
+               "  4  ALL breach links\n  5  Password HIBP check\n"
+               "  6  Domain breach search\n  7  Username breach scan\n"
+               "  8  XposedOrNot API  [NOUVEAU — sans cle, resultats directs]\n")
+    c = input(LC + "  Choice > ").strip()
+
+    if c == "1":
+        q = input(LC + "  Search > ").strip(); e = qenc(q)
         section("ZSEARCHER.FR", LR)
-        print(LW + "  ZSearcher.fr is a French specialised breach search engine.")
-        print(LW + "  Indexes French and international leak databases.\n")
         for name, lnk in [
             ("ZSearcher main",   "https://zsearcher.fr/"),
             ("ZSearcher search", f"https://zsearcher.fr/search?q={e}"),
             ("ZSearcher email",  f"https://zsearcher.fr/email?q={e}"),
-            ("ZSearcher phone",  f"https://zsearcher.fr/search?q={qenc(re.sub(chr(92)+'D','',q))}"),
         ]: link(name, lnk, LC)
-
     elif c == "2":
-        q = input(LC + "  Search (email / phone / username / domain) > ").strip()
-        e = qenc(q)
+        q = input(LC + "  Search > ").strip(); e = qenc(q)
         section("OATHNET.ORG", LR)
-        print(LW + "  OathNet.org — international breach and OSINT aggregator.\n")
         for name, lnk in [
             ("OathNet main",   "https://oathnet.org/"),
             ("OathNet search", f"https://oathnet.org/search?q={e}"),
-            ("OathNet email",  f"https://oathnet.org/email?q={e}"),
         ]: link(name, lnk, LC)
-
     elif c == "3":
-        email = input(LC + "  Email > ").strip()
-        e = qenc(email)
+        email = input(LC + "  Email > ").strip(); e = qenc(email)
         section("HAVEIBEENPWNED", LR)
         print(LW + f"  Direct link: https://haveibeenpwned.com/account/{e}\n")
         try:
@@ -958,47 +1366,35 @@ def breach_engine():
             elif r.status_code == 404:
                 print(LG + "  [OK]  Not found in known public breaches.")
             elif r.status_code == 401:
-                print(LY + "  API key needed — get free key at haveibeenpwned.com/API/Key")
-                print(LW + "  Or use the direct link above.")
+                print(LY + "  API key needed — https://haveibeenpwned.com/API/Key")
             else:
-                print(LY + f"  HTTP {r.status_code} — use the direct link.")
+                print(LY + f"  HTTP {r.status_code}")
         except Exception as e:
             print(LR + f"  Failed: {e}")
-
     elif c == "4":
-        q = input(LC + "  Email / username / phone / domain > ").strip()
-        e = qenc(q)
+        q = input(LC + "  Query > ").strip(); e = qenc(q)
         section("ALL BREACH DATABASE LINKS", LR)
         for name, lnk in [
-            ("ZSearcher.fr",       f"https://zsearcher.fr/search?q={e}"),
-            ("OathNet.org",        f"https://oathnet.org/search?q={e}"),
-            ("HaveIBeenPwned",     f"https://haveibeenpwned.com/account/{e}"),
-            ("DeHashed",           f"https://dehashed.com/search?query={e}"),
-            ("IntelX",             f"https://intelx.io/?s={e}"),
-            ("LeakCheck",          "https://leakcheck.io/"),
-            ("BreachDirectory",    "https://breachdirectory.org/"),
-            ("Snusbase",           "https://snusbase.com/"),
-            ("Leak-Lookup",        "https://leak-lookup.com/search"),
-            ("ScatteredSecrets",   "https://scatteredsecrets.com/"),
-            ("EmailRep.io",        f"https://emailrep.io/{e}"),
-            ("Firefox Monitor",    "https://monitor.firefox.com/"),
-            ("CyberNews Checker",  "https://cybernews.com/personal-data-leak-check/"),
-            ("Spycloud",           "https://spycloud.com/check-your-exposure/"),
-            ("Psbdmp pastes",      f"https://psbdmp.ws/api/search/{e}"),
-            ("Grep.app",           f"https://grep.app/search?q={e}"),
-            ("Google Pastebin",    f"https://www.google.com/search?q=site:pastebin.com+%22{e}%22"),
-            ("Google Gist",        f"https://www.google.com/search?q=site:gist.github.com+%22{e}%22"),
-            ("PublicWWW",          f"https://publicwww.com/websites/{e}/"),
-            ("Ahmia dark web",     f"https://ahmia.fi/search/?q={e}"),
-            ("GhostProject",       "https://ghostproject.fr/"),
+            ("ZSearcher.fr",    f"https://zsearcher.fr/search?q={e}"),
+            ("OathNet.org",     f"https://oathnet.org/search?q={e}"),
+            ("HaveIBeenPwned",  f"https://haveibeenpwned.com/account/{e}"),
+            ("DeHashed",        f"https://dehashed.com/search?query={e}"),
+            ("IntelX",          f"https://intelx.io/?s={e}"),
+            ("LeakCheck",       "https://leakcheck.io/"),
+            ("BreachDirectory", "https://breachdirectory.org/"),
+            ("Snusbase",        "https://snusbase.com/"),
+            ("Grep.app",        f"https://grep.app/search?q={e}"),
+            ("Google Pastebin", f"https://www.google.com/search?q=site:pastebin.com+%22{e}%22"),
+            ("Spycloud",        "https://spycloud.com/check-your-exposure/"),
+            ("CyberNews",       "https://cybernews.com/personal-data-leak-check/"),
+            ("XposedOrNot",     f"https://xposedornot.com/"),
         ]: link(name, lnk, LR)
-
     elif c == "5":
         pwd = input(LC + "  Password to check > ").strip()
         if not pwd: pause(); return
         sha1 = hashlib.sha1(pwd.encode()).hexdigest().upper()
         prefix, suffix = sha1[:5], sha1[5:]
-        spinner("Querying HIBP Pwned Passwords (k-anonymity)", 1.0, LM)
+        spinner("Querying HIBP (k-anonymity)", 1.0, LM)
         try:
             r = requests.get(f"https://api.pwnedpasswords.com/range/{prefix}", timeout=8)
             found = False
@@ -1006,48 +1402,40 @@ def breach_engine():
                 h, count = line.split(":")
                 if h == suffix:
                     print(LR + f"\n  [!!!]  Found {count} times in known breaches!")
-                    print(LR +  "         Change this password immediately.")
                     found = True; break
-            if not found:
-                print(LG + "\n  [OK]  Not found in known breaches.")
-            print(DIM + "\n  Only 5 chars of SHA1 hash sent — password never leaves your device.")
+            if not found: print(LG + "\n  [OK]  Not found in HIBP database.")
+            print(DIM + "\n  Only 5 chars of SHA1 sent — password never leaves your device.")
         except Exception as e:
             print(LR + f"  Failed: {e}")
-
     elif c == "6":
-        domain = input(LC + "  Domain > ").strip()
-        e = qenc(domain)
-        section(f"DOMAIN BREACH SEARCH — {domain}", LR)
+        domain = input(LC + "  Domain > ").strip(); e = qenc(domain)
+        section(f"DOMAIN BREACH — {domain}", LR)
         for name, lnk in [
-            ("ZSearcher",       f"https://zsearcher.fr/search?q={e}"),
-            ("OathNet",         f"https://oathnet.org/search?q={e}"),
-            ("HaveIBeenPwned",  f"https://haveibeenpwned.com/DomainSearch/{domain}"),
-            ("DeHashed",        f"https://dehashed.com/search?query={e}"),
-            ("IntelX",          f"https://intelx.io/?s={e}"),
-            ("Shodan",          f"https://www.shodan.io/domain/{domain}"),
-            ("Grep.app",        f"https://grep.app/search?q={e}"),
-            ("PublicWWW",       f"https://publicwww.com/websites/{e}/"),
-            ("URLScan",         f"https://urlscan.io/search/#{e}"),
-            ("VirusTotal",      f"https://www.virustotal.com/gui/domain/{domain}"),
+            ("ZSearcher",      f"https://zsearcher.fr/search?q={e}"),
+            ("OathNet",        f"https://oathnet.org/search?q={e}"),
+            ("HaveIBeenPwned", f"https://haveibeenpwned.com/DomainSearch/{domain}"),
+            ("DeHashed",       f"https://dehashed.com/search?query={e}"),
+            ("Grep.app",       f"https://grep.app/search?q={e}"),
+            ("URLScan",        f"https://urlscan.io/search/#{e}"),
+            ("VirusTotal",     f"https://www.virustotal.com/gui/domain/{domain}"),
         ]: link(name, lnk, LR)
-
     elif c == "7":
-        username = input(LC + "  Username > ").strip()
-        e = qenc(username)
-        section(f"USERNAME BREACH SEARCH — {username}", LR)
+        username = input(LC + "  Username > ").strip(); e = qenc(username)
+        section(f"USERNAME BREACH — {username}", LR)
         for name, lnk in [
-            ("ZSearcher",       f"https://zsearcher.fr/search?q={e}"),
-            ("OathNet",         f"https://oathnet.org/search?q={e}"),
-            ("DeHashed",        f"https://dehashed.com/search?query={e}"),
-            ("IntelX",          f"https://intelx.io/?s={e}"),
-            ("Grep.app",        f"https://grep.app/search?q={e}"),
-            ("Snusbase",        "https://snusbase.com/"),
-            ("Google Pastebin", f"https://www.google.com/search?q=site:pastebin.com+%22{e}%22"),
+            ("ZSearcher",      f"https://zsearcher.fr/search?q={e}"),
+            ("OathNet",        f"https://oathnet.org/search?q={e}"),
+            ("DeHashed",       f"https://dehashed.com/search?query={e}"),
+            ("IntelX",         f"https://intelx.io/?s={e}"),
+            ("Grep.app",       f"https://grep.app/search?q={e}"),
         ]: link(name, lnk, LR)
+    elif c == "8":
+        xposedornot()
+        return
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑤ USERNAME TRACKER  (50+ sites)
+#  USERNAME TRACKER (55+ sites)
 # ──────────────────────────────────────────────
 
 SITES = [
@@ -1074,15 +1462,18 @@ SITES = [
     ("HackerRank","https://www.hackerrank.com/{}"),("LeetCode","https://leetcode.com/{}"),
     ("Kaggle","https://www.kaggle.com/{}"),("DockerHub","https://hub.docker.com/u/{}"),
     ("npm","https://www.npmjs.com/~{}"),("PyPI","https://pypi.org/user/{}"),
-    ("Crates.io","https://crates.io/users/{}"),("Wattpad","https://www.wattpad.com/user/{}"),
-    ("Goodreads","https://www.goodreads.com/{}"),("Disqus","https://disqus.com/by/{}"),
-    ("Vimeo","https://vimeo.com/{}"),("Mix","https://mix.com/{}"),
+    ("Wattpad","https://www.wattpad.com/user/{}"),("Goodreads","https://www.goodreads.com/{}"),
+    ("Disqus","https://disqus.com/by/{}"),("Vimeo","https://vimeo.com/{}"),
     ("Trello","https://trello.com/{}"),("Venmo","https://venmo.com/{}"),
-    ("Instructables","https://www.instructables.com/member/{}"),
     ("Poshmark","https://poshmark.com/closet/{}"),
     ("Snapchat","https://www.snapchat.com/add/{}"),
     ("Telegram","https://t.me/{}"),
-    ("Discord","https://discord.com/users/{}"),
+    ("Xbox Live",   "https://account.xbox.com/en-US/Profile?GamerTag={}"),
+    ("PlayStation", "https://psnprofiles.com/{}"),
+    ("DeviantArt",  "https://www.deviantart.com/{}"),
+    ("Last.fm",     "https://www.last.fm/user/{}"),
+    ("HackerOne",   "https://hackerone.com/{}"),
+    ("Blogger",     "https://{}.blogspot.com"),
 ]
 
 def username_tracker():
@@ -1098,24 +1489,23 @@ def username_tracker():
         try:
             r = requests.get(url, timeout=8, allow_redirects=True,
                              headers={"User-Agent":"Mozilla/5.0"})
-            return ("FOUND" if r.status_code==200 else "·", name, url)
+            return ("FOUND" if r.status_code==200 else ".", name, url)
         except:
             return ("ERR", name, url)
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
         results = list(ex.map(chk, SITES))
     for status, name, url in results:
         if status == "FOUND":
-            print(LG + f"  [+]  {name:<22}" + LW + f" {url}")
-            found.append(url)
+            print(LG + f"  [+]  {name:<22}" + LW + f" {url}"); found.append(url)
         elif status == "ERR":
             print(DIM+C + f"  [?]  {name}")
         else:
             print(DIM+W + f"  [ ]  {name}")
-    section(f"RESULTS  —  {len(found)} FOUND  /  {len(SITES)} CHECKED", LM)
+    section(f"RESULTS  -  {len(found)} FOUND  /  {len(SITES)} CHECKED", LM)
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑥ DNS LOOKUP
+#  DNS LOOKUP
 # ──────────────────────────────────────────────
 
 def dns_lookup():
@@ -1127,31 +1517,33 @@ def dns_lookup():
     try:
         ip = socket.gethostbyname(domain)
         row("A", ip, LY, LW)
-        try:
-            rev = socket.gethostbyaddr(ip)
-            row("Reverse DNS", rev[0], LY, LW)
+        try: rev = socket.gethostbyaddr(ip); row("Reverse DNS", rev[0], LY, LW)
         except: pass
-    except Exception as e:
-        row("A", f"FAILED: {e}", LY, LR)
+    except Exception as e: row("A", f"FAILED: {e}", LY, LR)
     for rtype in ["MX","NS","TXT","AAAA","CAA","SOA","CNAME"]:
         try:
-            r = requests.get(f"https://dns.google/resolve?name={domain}&type={rtype}",
-                             timeout=8).json()
+            r = requests.get(f"https://dns.google/resolve?name={domain}&type={rtype}",timeout=8).json()
             answers = r.get("Answer",[])
             if answers:
                 section(f"{rtype} RECORDS", LY)
-                for a in answers:
-                    print(LY + f"  {a.get('data','')[:90]}")
+                for a in answers: print(LY + f"  {a.get('data','')[:90]}")
         except: pass
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑦ PORT SCANNER
+#  PORT SCANNER
 # ──────────────────────────────────────────────
 
 COMMON_PORTS=[21,22,23,25,53,80,110,111,135,139,143,443,445,465,
               587,631,993,995,1433,1521,2222,3306,3389,5432,5900,
               6379,6443,8080,8443,8888,9200,27017,27018,28017]
+
+SERVICE_MAP = {
+    21:"FTP",22:"SSH",23:"Telnet",25:"SMTP",53:"DNS",80:"HTTP",110:"POP3",
+    143:"IMAP",443:"HTTPS",445:"SMB",3306:"MySQL",3389:"RDP",5432:"PostgreSQL",
+    5900:"VNC",6379:"Redis",8080:"HTTP-Alt",8443:"HTTPS-Alt",9200:"Elasticsearch",
+    27017:"MongoDB",22:"SSH",587:"SMTP-SSL",993:"IMAPS",995:"POP3S"
+}
 
 def port_scanner():
     show_logo("port")
@@ -1164,21 +1556,19 @@ def port_scanner():
         try:
             s,e = map(int, input(LG+"  Range (e.g. 1-500) > ").split("-"))
             ports = range(s, e+1)
-        except:
-            print(LR+"  Invalid."); pause(); return
+        except: print(LR+"  Invalid."); pause(); return
     spinner(f"Scanning {host}", 1.2, LG)
     found=[]
     def chk(p):
         try:
-            s = socket.socket(); s.settimeout(0.4)
+            s = socket.socket(); s.settimeout(0.5)
             if s.connect_ex((host,p)) == 0:
-                try: svc = socket.getservbyport(p)
-                except: svc = "unknown"
+                svc = SERVICE_MAP.get(p) or "unknown"
                 return (p, svc)
             s.close()
         except: pass
         return None
-    with concurrent.futures.ThreadPoolExecutor(max_workers=200) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=150) as ex:
         results = list(ex.map(chk, ports))
     section("OPEN PORTS", LG)
     for r in sorted([r for r in results if r], key=lambda x: x[0]):
@@ -1188,7 +1578,7 @@ def port_scanner():
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑧ GEO IP
+#  GEO IP
 # ──────────────────────────────────────────────
 
 def geo_ip():
@@ -1201,60 +1591,19 @@ def geo_ip():
         d2 = requests.get(f"http://ip-api.com/json/{ip}", timeout=10).json()
         section(f"GEO IP — {ip}", LY)
         fields=["country_name","region","city","postal","latitude","longitude",
-                "timezone","org","asn","currency","languages","country_capital",
-                "country_calling_code","network","version","country_area",
-                "country_population"]
+                "timezone","org","asn","currency","languages","network"]
         for f in fields:
             v = d.get(f) or d2.get(f,"N/A")
             if v and v!="N/A": row(f, v, LY, LW)
         lat=d.get("latitude",""); lon=d.get("longitude","")
         if lat and lon:
             print(); print(LY+f"  Google Maps : https://maps.google.com/?q={lat},{lon}")
-            print(LY+f"  OpenStreet  : https://www.openstreetmap.org/?mlat={lat}&mlon={lon}")
     except Exception as e:
         print(LR + f"  Failed: {e}")
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑨ SUBDOMAIN FINDER
-# ──────────────────────────────────────────────
-
-SUBS=["www","mail","ftp","smtp","pop","imap","webmail","cpanel","admin","api",
-      "dev","staging","test","beta","app","portal","dashboard","blog","shop",
-      "store","forum","support","help","docs","cdn","static","media","img",
-      "images","video","files","download","upload","auth","login","secure",
-      "vpn","ssh","git","gitlab","jenkins","ci","status","monitor","grafana",
-      "ns1","ns2","mx","mx1","mx2","remote","owa","exchange","autodiscover",
-      "m","mobile","panel","server","host","cloud","backup","old","new","v1",
-      "v2","api2","search","news","web","assets","s3","bucket","data","db",
-      "database","internal","intranet","extranet","private","public","corp",
-      "crm","erp","vpn2","proxy","gateway","relay","sftp","ntp","ldap","jira",
-      "confluence","wiki","redmine","phpmyadmin","mysql","postgres","elastic",
-      "kibana","grafana","prometheus","nagios","zabbix","splunk","jenkins",
-      "sonar","nexus","artifactory","registry","k8s","kube","rancher"]
-
-def subdomain_finder():
-    show_logo("sub")
-    domain = input(LC + "  Domain > ").strip()
-    if not domain: pause(); return
-    bar("  Building wordlist", 20, 0.015, LC, C)
-    print(LC + f"\n  Testing {len(SUBS)} subdomains on {domain}...\n")
-    found=[]
-    def chk(sub):
-        t=f"{sub}.{domain}"
-        try: return (t, socket.gethostbyname(t))
-        except: return None
-    with concurrent.futures.ThreadPoolExecutor(max_workers=80) as ex:
-        results = list(ex.map(chk, SUBS))
-    section("FOUND SUBDOMAINS", LC)
-    for r in [r for r in results if r]:
-        sub,ip=r; found.append(sub)
-        print(LC+f"  [+]  {sub:<46}"+LW+f" -> {ip}")
-    print(LC+f"\n  {len(found)} subdomain(s) found.")
-    pause()
-
-# ──────────────────────────────────────────────
-#  ⑩ WHOIS / REVERSE DNS
+#  WHOIS / REVERSE DNS
 # ──────────────────────────────────────────────
 
 def whois_reverse():
@@ -1272,18 +1621,23 @@ def whois_reverse():
         except:
             try: ip=socket.gethostbyname(d); row("IP",ip,LY,LW)
             except Exception as e: print(LR+f"  Failed: {e}")
+        section("WHOIS LINKS", LY)
+        for name,lnk in [
+            ("ICANN",     f"https://lookup.icann.org/en/lookup?name={d}"),
+            ("Whois.com", f"https://www.whois.com/whois/{d}"),
+            ("DomainTools",f"https://whois.domaintools.com/{d}"),
+        ]: link(name,lnk,LC)
     elif c=="2":
         ip=input(LY+"  IP > ").strip()
         spinner("Reverse DNS",0.8,LY)
         try:
             h=socket.gethostbyaddr(ip)
             section("REVERSE DNS",LY); row("IP",ip,LY,LW); row("Hostname",h[0],LY,LG)
-            if h[1]: row("Aliases",", ".join(h[1]),LY,LW)
         except Exception as e: print(LR+f"  Failed: {e}")
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑪ SSL INSPECTOR
+#  SSL INSPECTOR
 # ──────────────────────────────────────────────
 
 def ssl_inspector():
@@ -1295,6 +1649,7 @@ def ssl_inspector():
         ctx=ssl.create_default_context()
         with ctx.wrap_socket(socket.socket(), server_hostname=host) as s:
             s.settimeout(10); s.connect((host,443)); cert=s.getpeercert()
+            proto = s.version(); cipher = s.cipher()
         subj=dict(x[0] for x in cert.get("subject",[]))
         iss=dict(x[0] for x in cert.get("issuer",[]))
         section("SSL CERTIFICATE", LC)
@@ -1303,6 +1658,8 @@ def ssl_inspector():
         row("Issuer",      iss.get("organizationName","N/A"), LC, LW)
         row("Valid From",  cert.get("notBefore","N/A"), LC, LG)
         row("Valid Until", cert.get("notAfter","N/A"),  LC, LG)
+        row("Protocol",    proto or "N/A", LC, LW)
+        row("Cipher",      cipher[0] if cipher else "N/A", LC, LW)
         sans=cert.get("subjectAltName",[])
         if sans:
             section("SUBJECT ALT NAMES", LC)
@@ -1312,7 +1669,7 @@ def ssl_inspector():
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑫ HTTP HEADER INSPECTOR
+#  HTTP HEADER INSPECTOR
 # ──────────────────────────────────────────────
 
 def header_inspector():
@@ -1337,7 +1694,7 @@ def header_inspector():
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑬ TECH DETECTOR
+#  TECH DETECTOR
 # ──────────────────────────────────────────────
 
 def tech_detector():
@@ -1351,16 +1708,12 @@ def tech_detector():
         checks={
             "WordPress":["wp-content","wp-includes"],"Drupal":["drupal"],
             "Joomla":["joomla"],"Shopify":["shopify"],"Wix":["wix.com"],
-            "Squarespace":["squarespace"],"Webflow":["webflow"],
             "React":["react","__react"],"Vue.js":["vue.js"],"Angular":["angular"],
-            "Next.js":["__next"],"Gatsby":["gatsby"],"jQuery":["jquery"],
-            "Bootstrap":["bootstrap"],"Tailwind":["tailwind"],
-            "PHP":["php",".php"],"Django":["csrfmiddlewaretoken"],
+            "Next.js":["__next"],"jQuery":["jquery"],"Bootstrap":["bootstrap"],
+            "Tailwind":["tailwind"],"PHP":["php",".php"],"Django":["csrfmiddlewaretoken"],
             "Laravel":["laravel_session"],"Ruby on Rails":["rails","csrf-token"],
             "ASP.NET":["asp.net","__viewstate"],"Cloudflare":["cf-ray"],
-            "Nginx":["nginx"],"Apache":["apache"],"IIS":["iis"],
-            "Google Analytics":["google-analytics","gtag("],
-            "HubSpot":["hubspot"],"Intercom":["intercom"],"Zendesk":["zendesk"],
+            "Nginx":["nginx"],"Apache":["apache"],"Google Analytics":["google-analytics","gtag("],
         }
         section("DETECTED TECHNOLOGIES", LY)
         found=[]
@@ -1380,7 +1733,7 @@ def tech_detector():
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑭ GOOGLE DORK GENERATOR
+#  GOOGLE DORK GENERATOR
 # ──────────────────────────────────────────────
 
 def dork_gen():
@@ -1402,10 +1755,9 @@ def dork_gen():
         ("GitHub mentions",    f"site:github.com \"{target}\""),
         ("Pastebin mentions",  f"site:pastebin.com \"{target}\""),
         ("LinkedIn employees", f"site:linkedin.com inurl:/in/ \"{target}\""),
-        ("Cache",              f"cache:{target}"),
-        ("Related sites",      f"related:{target}"),
         ("Backup files",       f"site:{target} ext:bak OR ext:old OR ext:backup"),
         ("API keys exposed",   f"site:{target} intext:apikey OR intext:api_key"),
+        ("Cache",              f"cache:{target}"),
     ]
     if kw: dorks.append(("Keyword", f"site:{target} \"{kw}\""))
     section("GENERATED DORKS", LY)
@@ -1414,7 +1766,95 @@ def dork_gen():
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑮ PASSWORD TOOLS
+#  ADVANCED DORK BUILDER
+# ──────────────────────────────────────────────
+
+def adv_dork():
+    show_logo("dork")
+    print(LY+"  Build a custom Google dork.\n")
+    site   =input(LY+"  site:     > ").strip()
+    inurl  =input(LY+"  inurl:    > ").strip()
+    intitle=input(LY+"  intitle:  > ").strip()
+    intext =input(LY+"  intext:   > ").strip()
+    ext    =input(LY+"  ext:      > ").strip()
+    kw     =input(LY+"  keyword   > ").strip()
+    parts=[]
+    if site:    parts.append(f"site:{site}")
+    if inurl:   parts.append(f"inurl:{inurl}")
+    if intitle: parts.append(f"intitle:{intitle}")
+    if intext:  parts.append(f"intext:{intext}")
+    if ext:     parts.append(f"ext:{ext}")
+    if kw:      parts.append(f'"{kw}"')
+    dork=" ".join(parts)
+    section("YOUR DORK", LY)
+    print(LY+f"  {dork}")
+    print(LW+f"\n  Search: https://www.google.com/search?q={qenc(dork)}")
+    pause()
+
+# ──────────────────────────────────────────────
+#  OSINT DORK BUILDER (avancé)
+# ──────────────────────────────────────────────
+
+def osint_dork_builder():
+    show_logo("dork")
+    print(LY+"  Advanced OSINT dork builder.\n")
+    first    = input(LY+"  First name   > ").strip()
+    last     = input(LY+"  Last name    > ").strip()
+    username = input(LY+"  Username     > ").strip()
+    email    = input(LY+"  Email        > ").strip()
+    phone    = input(LY+"  Phone        > ").strip()
+    domain   = input(LY+"  Domain/site  > ").strip()
+    company  = input(LY+"  Company      > ").strip()
+    dorks = []
+    E = qenc
+    names = []
+    if first and last: names.append(f"{first} {last}")
+    if first: names.append(first)
+    if last:  names.append(last)
+    if names:
+        for n in names:
+            dorks += [
+                ("Name basic",      f'"{n}"'),
+                ("LinkedIn",        f'site:linkedin.com "{n}"'),
+                ("Twitter/X",       f'site:twitter.com "{n}"'),
+                ("Facebook",        f'site:facebook.com "{n}"'),
+                ("GitHub",          f'site:github.com "{n}"'),
+                ("Resume/CV",       f'"{n}" (resume OR cv) filetype:pdf'),
+            ]
+            if company:
+                dorks.append(("Name + company", f'"{n}" "{company}"'))
+    if username:
+        dorks += [
+            ("Username basic",   f'"{username}"'),
+            ("Username inurl",   f'inurl:{username}'),
+        ]
+    if email:
+        dorks += [
+            ("Email basic",    f'"{email}"'),
+            ("Email breach",   f'"{email}" (breach OR leak OR dump)'),
+            ("Email pastebin", f'site:pastebin.com "{email}"'),
+        ]
+    if phone:
+        clean = re.sub(r"\D","",phone)
+        dorks += [
+            ("Phone basic",  f'"{phone}"'),
+            ("Phone digits", f'"{clean}"'),
+        ]
+    if domain:
+        dorks += [
+            ("Domain all",   f"site:{domain}"),
+            ("Domain login", f"site:{domain} inurl:login OR inurl:admin"),
+            ("Domain config",f"site:{domain} ext:env OR ext:cfg OR ext:sql"),
+            ("Domain crt.sh",f"site:crt.sh \"{domain}\""),
+        ]
+    dorks = [(k,v) for k,v in dorks if v]
+    section(f"GENERATED {len(dorks)} DORKS", LY)
+    for desc, dork in dorks:
+        print(LY+f"  {desc:<28}"+LW+f" https://www.google.com/search?q={E(dork)}")
+    pause()
+
+# ──────────────────────────────────────────────
+#  PASSWORD TOOLS
 # ──────────────────────────────────────────────
 
 def password_tools():
@@ -1449,18 +1889,14 @@ def password_tools():
             (any(ch.islower() for ch in pwd),"Lowercase"),
             (any(ch.isdigit() for ch in pwd),"Digits"),
             (any(ch in "!@#$%^&*()-_=+[]{}|;:,.<>?" for ch in pwd),"Special chars"),
-            (not any(pwd.lower().startswith(w) for w in
-                     ["password","pass","123","qwerty","admin","letme","abc"]),"Not common prefix"),
         ]
         score=0
         for passed,label in checks:
             print((LG+"  [OK] " if passed else LR+"  [!!] ")+LW+label)
             if passed: score+=1
-        rating=["Very Weak","Weak","Weak","Medium","Medium","Good","Good","Strong","Very Strong"]
-        rcol=[LR,LR,LR,LY,LY,LG,LG,LG,LG][min(score,8)]
-        print()
-        print(LM+f"  Score: "+LG+"█"*score+DIM+"░"*(8-score)+LM+f"  {score}/8  "+rcol+rating[min(score,8)])
-        section("HIBP CHECK (k-anonymity)",LM)
+        rating=["Very Weak","Weak","Weak","Medium","Medium","Good","Strong","Very Strong"][min(score,7)]
+        print(LM+f"\n  Score: {score}/7  "+rating)
+        section("HIBP CHECK",LM)
         sha1=hashlib.sha1(pwd.encode()).hexdigest().upper()
         prefix,suffix=sha1[:5],sha1[5:]
         spinner("Querying HIBP",0.8,LM)
@@ -1484,7 +1920,7 @@ def password_tools():
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑯ HASH TOOLS
+#  HASH TOOLS
 # ──────────────────────────────────────────────
 
 def hash_tools():
@@ -1512,13 +1948,16 @@ def hash_tools():
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑰ METADATA EXTRACTOR
+#  METADATA EXTRACTOR
 # ──────────────────────────────────────────────
 
 def metadata_extractor():
     show_logo("ip")
-    if not PIL_OK: print(LR+"  Pillow not installed. Run: pip install Pillow"); pause(); return
-    path=input(LG+"  Image path > ").strip()
+    if not PIL_OK:
+        print(LR+"  Pillow not installed.")
+        print(LY+"  Install with:  pip install Pillow")
+        pause(); return
+    path=input(LG+"  Image path > ").strip().strip('"').strip("'")
     if not path: pause(); return
     spinner("Reading EXIF",0.6,LG)
     try:
@@ -1526,62 +1965,312 @@ def metadata_extractor():
         section("IMAGE INFO",LG)
         row("Format",img.format,LG,LW); row("Mode",img.mode,LG,LW)
         row("Size",f"{img.size[0]} x {img.size[1]} px",LG,LW)
-        exif=img._getexif()
-        if exif:
-            section("EXIF DATA",LG)
-            for tid,val in exif.items():
-                tag=TAGS.get(tid,tid)
-                if tag=="GPSInfo" and isinstance(val,dict):
-                    section("GPS DATA",LY)
-                    for gt,gv in val.items():
-                        print(LY+f"  {str(GPSTAGS.get(gt,gt)):<28}"+LW+f" {gv}")
-                else:
+        # EXIF moderne (getexif)
+        try:
+            from PIL.ExifTags import TAGS, GPSTAGS
+            exif_data = img.getexif()
+            if exif_data:
+                section("EXIF DATA",LG)
+                for tid, val in exif_data.items():
+                    tag = TAGS.get(tid, str(tid))
                     print(LG+f"  {str(tag):<28}"+LW+f" {str(val)[:80]}")
-        else: print(LG+"  No EXIF metadata found.")
+            else:
+                print(LG+"  No EXIF metadata found.")
+        except Exception as exif_e:
+            print(LY+f"  EXIF read error: {exif_e}")
     except Exception as e: print(LR+f"  Error: {e}")
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑱ PUBLIC CAMERA FEEDS
+#  WIFI SCANNER
 # ──────────────────────────────────────────────
 
-def public_cameras():
-    show_logo("cam")
-    print(LR+"  Searches for publicly indexed / accessible camera feeds.\n")
-    location=input(LC+"  Location (city/country, leave blank to skip) > ").strip()
-    section("SHODAN CAMERA SEARCHES",LR)
-    queries=[
-        ("Webcams generic",   "has_screenshot:true port:80"),
-        ("Axis cameras",      "Axis title:Live"),
-        ("Hikvision cameras", "server:Hikvision-Webs"),
-        ("RTSP streams",      "port:554 has_screenshot:true"),
-        ("Port 8080 cams",    "port:8080 has_screenshot:true"),
-    ]
-    for name,q in queries:
-        full_q=q+(f" city:{location}" if location else "")
-        print(LR+f"  {name:<28}"+LW+f" https://www.shodan.io/search?query={qenc(full_q)}")
-    section("GOOGLE DORKS",LR)
-    dorks=[
-        ("Axis live view",  'intitle:"Live View / - AXIS"'),
-        ("Network camera",  'intitle:"Network Camera" inurl:main.cgi'),
-        ("Webcam index",    'intitle:"webcam" inurl:"view/index.shtml"'),
-        ("Traffic cams",    'intitle:"traffic camera" inurl:"cam"'),
-    ]
-    for name,dork in dorks:
-        full=dork+(f' "{location}"' if location else "")
-        print(LR+f"  {name:<28}"+LW+f" https://www.google.com/search?q={qenc(full)}")
-    section("PUBLIC CAMERA DIRECTORIES",LR)
-    for name,lnk in [
-        ("Insecam",         "http://www.insecam.org/"),
-        ("EarthCam",        "https://www.earthcam.com/"),
-        ("Windy cams",      "https://www.windy.com/"),
-        ("Camstreamer",     "https://app.camstreamer.com/"),
-        ("Opentopia",       "http://www.opentopia.com/webcam/"),
-    ]: link(name,lnk,LR)
+def wifi_scanner():
+    show_logo("geo")
+    print(LY + "  WiFi scanner — By camzzz\n")
+
+    spinner("Scanning WiFi networks", 1.5, LY)
+    networks = []
+
+    if IS_TERMUX:
+        # API WiFi Android
+        try:
+            result = subprocess.run(
+                ["termux-wifi-scaninfo"],
+                capture_output=True, text=True, timeout=15)
+            if result.returncode == 0 and result.stdout.strip():
+                import json as _json
+                data = _json.loads(result.stdout)
+                for net in data:
+                    networks.append({
+                        "ssid":    net.get("ssid","Hidden") or "Hidden",
+                        "bssid":   net.get("bssid","?"),
+                        "signal":  str(net.get("level","?")),
+                        "channel": str(net.get("channelWidth","?")),
+                        "authentication": net.get("capabilities","?"),
+                    })
+            else:
+                print(LY + "  termux-wifi-scaninfo returned no data.")
+                print(LY + "  Installe 'Termux:API' si ce n'est pas fait, et active la localisation.")
+        except FileNotFoundError:
+            print(LR + "  termux-wifi-scaninfo not found.")
+            print(LY + "  Install with:  pkg install termux-api")
+        except Exception as ex:
+            print(LR + f"  WiFi scan error: {ex}")
+    else:
+        # Linux fallback (nmcli)
+        try:
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "SSID,SIGNAL,CHAN,SECURITY", "dev", "wifi", "list"],
+                capture_output=True, text=True, timeout=10)
+            for line in result.stdout.strip().split("\n"):
+                if line:
+                    p = line.split(":")
+                    networks.append({
+                        "ssid":    p[0] if p[0] else "Hidden",
+                        "signal":  p[1]+"%"  if len(p)>1 else "N/A",
+                        "channel": p[2] if len(p)>2 else "N/A",
+                        "authentication": p[3] if len(p)>3 else "N/A",
+                    })
+        except Exception as ex:
+            print(LR + f"  nmcli error: {ex}")
+
+    if not networks:
+        print(LR + "\n  No networks found.")
+        if IS_TERMUX:
+            print(LY + "  Make sure Termux:API is installed:  pkg install termux-api")
+            print(LY + "  Et que la permission localisation est accordee.")
+        pause(); return
+
+    section(f"FOUND {len(networks)} NETWORKS", LY)
+    print(LY + f"  {'#':<4} {'SSID':<30} {'Signal':<12} {'Security'}")
+    print(LY + "  " + "-"*60)
+    for i, net in enumerate(networks, 1):
+        ssid  = net.get("ssid","?")[:28]
+        sig   = str(net.get("signal","?"))
+        auth  = net.get("authentication","?")[:20]
+        col   = LR if "OPEN" in auth.upper() else LG
+        print(LY + f"  {i:<4} {ssid:<30} {sig:<12} " + col + auth)
+
+    open_nets = [n["ssid"] for n in networks
+                 if "OPEN" in n.get("authentication","").upper()
+                 or n.get("authentication","").upper() in ["","NONE","N/A"]]
+    if open_nets:
+        print(LR + "\n  Open (unencrypted) networks:")
+        for s in open_nets: print(LR + f"    - {s}")
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑲ ASN / BGP
+#  WEB VULN SCANNER
+# ──────────────────────────────────────────────
+
+def web_vuln_scanner():
+    show_logo("port")
+    print(LR + "  Passive web vulnerability scanner — 20 checks.\n")
+    url = input(LR + "  Target URL > ").strip()
+    if not url: pause(); return
+    if not url.startswith("http"): url = "https://" + url
+    results = []
+    spinner(f"Connecting to {url}", 0.8, LR)
+    try:
+        resp = requests.get(url, timeout=10,
+                            headers={"User-Agent": "Mozilla/5.0"})
+    except Exception as ex:
+        print(LR + f"  Cannot reach target: {ex}"); pause(); return
+    hdrs = resp.headers; text = resp.text.lower()
+    section("SECURITY HEADERS", LR)
+    for hdr, label in [
+        ("Strict-Transport-Security","HSTS"),
+        ("Content-Security-Policy",  "CSP"),
+        ("X-Frame-Options",          "X-Frame-Options"),
+        ("X-Content-Type-Options",   "X-Content-Type-Options"),
+        ("X-XSS-Protection",         "X-XSS-Protection"),
+        ("Referrer-Policy",          "Referrer-Policy"),
+    ]:
+        present = hdr in hdrs
+        col = LG if present else LY
+        status = "OK  " if present else "WARN"
+        print(col + f"  [{status}]  {label:<35}" +
+              LW + f" {hdrs.get(hdr,'MISSING')[:50]}")
+        results.append((label, status, hdrs.get(hdr,"MISSING")))
+    section("SERVER INFO EXPOSURE", LR)
+    for hdr in ["Server","X-Powered-By","X-AspNet-Version","X-Generator"]:
+        val = hdrs.get(hdr)
+        if val:
+            print(LY + f"  [WARN]  {hdr:<35}" + LW + f" {val[:60]}")
+            results.append((hdr,"WARN",val))
+    section("SENSITIVE FILES", LR)
+    base = url.rstrip("/")
+    for path in ["/.env","/.git/config","/robots.txt","/phpinfo.php",
+                 "/wp-config.php","/.htaccess","/config.php","/admin","/phpmyadmin"]:
+        try:
+            r2 = requests.get(base+path, timeout=5,
+                              headers={"User-Agent":"Mozilla/5.0"})
+            if r2.status_code == 200 and len(r2.text) > 10:
+                print(LR + f"  [VULN]  Sensitive file exposed: {path}")
+                results.append((path,"VULN",f"HTTP 200"))
+        except: pass
+    section("SUMMARY", LR)
+    vulns = [r for r in results if r[1]=="VULN"]
+    warns = [r for r in results if r[1]=="WARN"]
+    row("VULN findings", len(vulns), LR, LR if vulns else LG)
+    row("WARN findings", len(warns), LY, LY if warns else LG)
+    try:
+        save = input(LY+"\n  Save report to txt? [y/N] > ").strip().lower()
+        if save=="y":
+            fname = f"vuln_scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            with open(fname,"w") as f:
+                f.write(f"Scan: {url}\nDate: {datetime.now()}\n{'='*60}\n")
+                for label,status,detail in results:
+                    f.write(f"[{status}] {label}: {detail}\n")
+            print(LG+f"  Saved to {fname}")
+    except: pass
+    pause()
+
+# ──────────────────────────────────────────────
+#  FIREWALL DETECTOR
+# ──────────────────────────────────────────────
+
+def firewall_detector():
+    show_logo("port")
+    print(LC + "  Detects WAF, CDN, bot protection, SSL info.\n")
+    url = input(LC + "  Target URL > ").strip()
+    if not url: pause(); return
+    if not url.startswith("http"): url = "https://" + url
+    from urllib.parse import urlparse as _up
+    hostname = _up(url).netloc
+    spinner(f"Scanning {url}", 1.5, LC)
+    try:
+        r = requests.get(url, timeout=8, headers={"User-Agent":"Mozilla/5.0"})
+        all_hdrs = r.headers; page = r.text.lower()
+    except Exception as ex:
+        print(LR + f"  Cannot reach target: {ex}"); pause(); return
+
+    WAF_SIGS = {
+        "Cloudflare": ["cf-ray","cf-cache-status","__cf_bm"],
+        "AWS WAF":    ["x-amzn-requestid","x-amz-cf-id"],
+        "Akamai":     ["akamai","x-akamai"],
+        "Imperva":    ["x-iinfo","incap_ses"],
+        "Sucuri":     ["x-sucuri-id"],
+        "Cloudfront": ["x-amz-cf","cloudfront"],
+        "Fastly":     ["fastly","x-served-by"],
+        "Varnish":    ["x-varnish"],
+        "DDoS-Guard": ["ddos-guard"],
+    }
+    BOT_SIGS = {
+        "reCAPTCHA":   ["recaptcha"],
+        "hCaptcha":    ["hcaptcha"],
+        "Turnstile":   ["turnstile"],
+        "PerimeterX":  ["perimeterx","_px"],
+        "DataDome":    ["datadome"],
+    }
+    waf_found=[]
+    for hdr, val in all_hdrs.items():
+        hl=hdr.lower(); vl=str(val).lower()
+        for waf, sigs in WAF_SIGS.items():
+            if any(s in hl or s in vl for s in sigs):
+                if waf not in " ".join(waf_found): waf_found.append(waf)
+    bot_found=[]
+    for bp, sigs in BOT_SIGS.items():
+        if any(s in page for s in sigs): bot_found.append(bp)
+
+    section("WAF / FIREWALL", LR)
+    if waf_found:
+        for w in waf_found: print(LR + f"  [+]  {w}")
+    else: print(DIM+LW+"  None detected")
+
+    section("BOT PROTECTION", LM)
+    if bot_found:
+        for b in bot_found: print(LM + f"  [+]  {b}")
+    else: print(DIM+LW+"  None detected")
+
+    section("SERVER INFO", LY)
+    for hdr in ["Server","X-Powered-By","X-Generator"]:
+        v = all_hdrs.get(hdr)
+        if v: row(hdr, v, LY, LW)
+
+    section("SECURITY HEADERS", LC)
+    for sh in ["Strict-Transport-Security","Content-Security-Policy","X-Frame-Options","X-Content-Type-Options"]:
+        if sh in all_hdrs:
+            print(LG + f"  [OK]  {sh}")
+        else:
+            print(LR + f"  [!!]  {sh} MISSING")
+    pause()
+
+# ──────────────────────────────────────────────
+#  FILE SCANNER
+# ──────────────────────────────────────────────
+
+def file_scanner():
+    show_logo("hash")
+    print(LM + "  Scans a file for suspicious strings, high entropy, hashes.\n")
+    filepath = input(LM + "  File path > ").strip().strip('"').strip("'")
+    if not filepath or not os.path.exists(filepath):
+        print(LR + "  File not found."); pause(); return
+    spinner("Analysing file", 1.0, LM)
+    md5h = hashlib.md5(); sha256h = hashlib.sha256()
+    threats=[]; warnings=[]
+    try:
+        with open(filepath, "rb") as f:
+            while chunk := f.read(8192):
+                md5h.update(chunk); sha256h.update(chunk)
+        md5_val    = md5h.hexdigest()
+        sha256_val = sha256h.hexdigest()
+    except Exception as ex:
+        print(LR + f"  Hash error: {ex}"); pause(); return
+    section("FILE INFO", LM)
+    row("Path",   filepath,    LM, LW)
+    row("Size",   f"{os.path.getsize(filepath):,} bytes", LM, LW)
+    row("MD5",    md5_val,     LM, LW)
+    row("SHA256", sha256_val,  LM, LW)
+    print(LM + f"\n  VT check: https://www.virustotal.com/gui/file/{sha256_val}")
+    SUSPICIOUS = [
+        b"cmd.exe", b"powershell", b"WScript.Shell", b"HKEY_",
+        b"CreateRemoteThread", b"VirtualAllocEx", b"URLDownloadToFile",
+        b"system(", b"exec(", b"eval(", b"base64",
+        b"ransom", b"bitcoin", b"keylog",
+        b"wget ", b"curl ", b"chmod 777", b"/etc/passwd",
+        b"DROP TABLE", b"UNION SELECT",
+        b"<script>", b"javascript:", b"onerror=",
+    ]
+    try:
+        with open(filepath,"rb") as f: content = f.read()
+        for sig in SUSPICIOUS:
+            if sig in content:
+                threats.append(f"Suspicious string: {sig.decode('utf-8',errors='ignore')}")
+    except Exception as ex:
+        warnings.append(f"String scan error: {ex}")
+    # Entropy
+    try:
+        import math
+        sample = content[:65536]
+        if sample:
+            freq = [0]*256
+            for byte in sample: freq[byte]+=1
+            entropy = -sum((c/len(sample))*math.log2(c/len(sample)) for c in freq if c>0)
+            row("Entropy", f"{entropy:.2f}/8.0", LM,
+                LR if entropy>7.0 else LY if entropy>6.0 else LG)
+            if entropy>7.0: threats.append(f"Very high entropy ({entropy:.2f}) — packed/encrypted?")
+    except: pass
+    ext = os.path.splitext(filepath)[1].lower()
+    dangerous_exts=[".exe",".dll",".bat",".cmd",".vbs",".ps1",".jar",".msi"]
+    if ext in dangerous_exts: warnings.append(f"Executable file type: {ext}")
+    section("SCAN RESULTS", LM)
+    risk = "CRITICAL" if len(threats)>=5 else "HIGH" if len(threats)>=3 else \
+           "MEDIUM" if len(threats)>=1 else "LOW" if warnings else "CLEAN"
+    rcol = {"CRITICAL":LR,"HIGH":LR,"MEDIUM":LY,"LOW":LY,"CLEAN":LG}[risk]
+    row("Risk level", risk, LM, rcol)
+    if threats:
+        section("THREATS DETECTED",LM)
+        for i,t in enumerate(threats,1): print(LR+f"  [{i}]  {t}")
+    if warnings:
+        section("WARNINGS",LM)
+        for i,w in enumerate(warnings,1): print(LY+f"  [{i}]  {w}")
+    if risk=="CLEAN": print(LG+"\n  File appears clean based on static analysis.")
+    pause()
+
+# ──────────────────────────────────────────────
+#  ASN / BGP
 # ──────────────────────────────────────────────
 
 def asn_lookup():
@@ -1605,12 +2294,11 @@ def asn_lookup():
             row("ASN",f"AS{d.get('asn','N/A')}",LC,LW)
             row("Name",d.get("name","N/A"),LC,LW)
             row("Country",d.get("country_code","N/A"),LC,LW)
-            row("RIR",d.get("rir_allocation",{}).get("rir_name","N/A"),LC,LW)
         except Exception as e: print(LR+f"  Failed: {e}")
     pause()
 
 # ──────────────────────────────────────────────
-#  ⑳ WAYBACK MACHINE
+#  WAYBACK / ARCHIVE
 # ──────────────────────────────────────────────
 
 def wayback():
@@ -1631,10 +2319,6 @@ def wayback():
     except Exception as e: print(LR+f"  Failed: {e}")
     pause()
 
-# ──────────────────────────────────────────────
-#  ㉑ WAYBACK URL EXTRACTOR
-# ──────────────────────────────────────────────
-
 def wayback_urls():
     show_logo("geo")
     domain=input(LG+"  Domain > ").strip()
@@ -1652,7 +2336,7 @@ def wayback_urls():
     pause()
 
 # ──────────────────────────────────────────────
-#  ㉒ PROFILE BUILDER
+#  PROFILE BUILDER
 # ──────────────────────────────────────────────
 
 def profile_builder():
@@ -1676,8 +2360,6 @@ def profile_builder():
         ("LinkedIn",      f"https://www.linkedin.com/search/results/people/?keywords={enc_name}"),
         ("Twitter",       f"https://twitter.com/search?q=%22{enc_name}%22"),
         ("Facebook",      f"https://www.facebook.com/search/top/?q={enc_name}"),
-        ("Spokeo",        f"https://www.spokeo.com/search?q={enc_name}"),
-        ("WhitePages",    f"https://www.whitepages.com/name/{enc_name}"),
         ("ZSearcher.fr",  f"https://zsearcher.fr/search?q={enc_name}"),
         ("OathNet.org",   f"https://oathnet.org/search?q={enc_name}"),
     ]: link(n,l,LM)
@@ -1688,7 +2370,7 @@ def profile_builder():
     pause()
 
 # ──────────────────────────────────────────────
-#  ㉓ SHODAN LINKS
+#  SHODAN LINKS
 # ──────────────────────────────────────────────
 
 def shodan_links():
@@ -1709,14 +2391,14 @@ def shodan_links():
         ("Greynoise",  f"https://viz.greynoise.io/ip/{target}"),
         ("VirusTotal", f"https://www.virustotal.com/gui/domain/{target}"),
         ("URLScan",    f"https://urlscan.io/search/#{e}"),
-        ("BinaryEdge", f"https://app.binaryedge.io/services/query?query={e}"),
         ("FOFA",       f"https://fofa.info/result?qbase64={base64.b64encode(target.encode()).decode()}"),
         ("OTX",        f"https://otx.alienvault.com/indicator/domain/{target}"),
+        ("BinaryEdge", f"https://app.binaryedge.io/services/query?query={e}"),
     ]: link(name,lnk,LC)
     pause()
 
 # ──────────────────────────────────────────────
-#  ㉔ QUICK RECON
+#  QUICK RECON
 # ──────────────────────────────────────────────
 
 def quick_recon():
@@ -1743,8 +2425,6 @@ def quick_recon():
         row("Server",r.headers.get("Server","N/A"),LG,LW)
         row("CSP","present" if r.headers.get("Content-Security-Policy") else "MISSING",LG,
             LG if r.headers.get("Content-Security-Policy") else LR)
-        row("HSTS","present" if r.headers.get("Strict-Transport-Security") else "MISSING",LG,
-            LG if r.headers.get("Strict-Transport-Security") else LR)
     except: pass
     section("QUICK SUBDOMAINS",LG)
     for sub in ["www","mail","api","admin","dev","staging","ftp","vpn","cdn","blog"]:
@@ -1758,14 +2438,13 @@ def quick_recon():
         ("VirusTotal",f"https://www.virustotal.com/gui/domain/{domain}"),
         ("URLScan",   f"https://urlscan.io/search/#{e}"),
         ("Wayback",   f"https://web.archive.org/web/*/{domain}"),
-        ("Dork",      f"https://www.google.com/search?q=site:{domain}"),
+        ("crt.sh",    f"https://crt.sh/?q=%.{domain}"),
         ("ZSearcher", f"https://zsearcher.fr/search?q={e}"),
-        ("OathNet",   f"https://oathnet.org/search?q={e}"),
     ]: link(name,lnk,LC)
     pause()
 
 # ──────────────────────────────────────────────
-#  ㉕ NETWORK INFO
+#  NETWORK INFO
 # ──────────────────────────────────────────────
 
 def network_info():
@@ -1776,6 +2455,7 @@ def network_info():
     row("Hostname",hn,LG,LW); row("Local IP",lip,LG,LW)
     row("Platform",platform.system()+" "+platform.release(),LG,LW)
     row("Python",sys.version.split()[0],LG,LW)
+    row("Termux","Yes" if IS_TERMUX else "No",LG,LG if IS_TERMUX else LW)
     section("PUBLIC IP",LG)
     try:
         pub=requests.get("https://api.ipify.org?format=json",timeout=8).json()
@@ -1788,7 +2468,7 @@ def network_info():
     pause()
 
 # ──────────────────────────────────────────────
-#  ㉖ ROBOTS / SITEMAP
+#  ROBOTS / SITEMAP
 # ──────────────────────────────────────────────
 
 def robots_sitemap():
@@ -1809,13 +2489,29 @@ def robots_sitemap():
     pause()
 
 # ──────────────────────────────────────────────
-#  ㉗ PASTE SEARCH
+#  SOCIAL SEARCH / PASTE / DARK WEB / CVE
 # ──────────────────────────────────────────────
+
+def social_search():
+    show_logo("user")
+    q=input(LM+"  Name / username / hashtag > ").strip(); e=qenc(q)
+    section("SOCIAL MEDIA SEARCH LINKS",LM)
+    for plat,lnk in [
+        ("Twitter/X",    f"https://twitter.com/search?q={e}&f=live"),
+        ("Instagram tags",f"https://www.instagram.com/explore/tags/{e}/"),
+        ("TikTok",       f"https://www.tiktok.com/search?q={e}"),
+        ("Facebook",     f"https://www.facebook.com/search/top/?q={e}"),
+        ("LinkedIn",     f"https://www.linkedin.com/search/results/people/?keywords={e}"),
+        ("Reddit",       f"https://www.reddit.com/search/?q={e}"),
+        ("YouTube",      f"https://www.youtube.com/results?search_query={e}"),
+        ("Telegram",     f"https://t.me/s/{q}"),
+        ("Snapchat",     f"https://www.snapchat.com/add/{q}"),
+    ]: link(plat,lnk,LM)
+    pause()
 
 def paste_search():
     show_logo("user")
-    q=input(LM+"  Search term > ").strip()
-    e=qenc(q)
+    q=input(LM+"  Search term > ").strip(); e=qenc(q)
     section("PASTE SEARCH LINKS",LM)
     for name,lnk in [
         ("Google Pastebin", f"https://www.google.com/search?q=site:pastebin.com+%22{e}%22"),
@@ -1823,80 +2519,25 @@ def paste_search():
         ("Psbdmp",          f"https://psbdmp.ws/api/search/{e}"),
         ("Grep.app",        f"https://grep.app/search?q={e}"),
         ("GitHub code",     f"https://github.com/search?q={e}&type=code"),
-        ("Rentry",          f"https://www.google.com/search?q=site:rentry.co+%22{e}%22"),
     ]: link(name,lnk,LM)
     pause()
-
-# ──────────────────────────────────────────────
-#  ㉘ FILE / DOC OSINT
-# ──────────────────────────────────────────────
-
-def file_osint():
-    show_logo("dork")
-    domain=input(LY+"  Domain > ").strip()
-    section("FILE SEARCH LINKS",LY)
-    for label,ext in [
-        ("PDF","pdf"),("Word","doc OR docx"),("Excel","xls OR xlsx"),
-        ("CSV","csv"),("SQL","sql"),("ENV","env"),("LOG","log"),
-        ("BAK","bak"),("ZIP","zip"),("CONFIG","conf OR config"),
-    ]:
-        q=qenc(f"site:{domain} ext:{ext}")
-        print(LY+f"  {label:<12}"+LW+f" https://www.google.com/search?q={q}")
-    pause()
-
-# ──────────────────────────────────────────────
-#  ㉙ SOCIAL MEDIA SEARCH
-# ──────────────────────────────────────────────
-
-def social_search():
-    show_logo("user")
-    q=input(LM+"  Name / username / hashtag > ").strip()
-    e=qenc(q)
-    section("SOCIAL MEDIA SEARCH LINKS",LM)
-    for plat,lnk in [
-        ("Twitter/X search",    f"https://twitter.com/search?q={e}&f=live"),
-        ("Instagram tags",      f"https://www.instagram.com/explore/tags/{e}/"),
-        ("TikTok",              f"https://www.tiktok.com/search?q={e}"),
-        ("Facebook",            f"https://www.facebook.com/search/top/?q={e}"),
-        ("LinkedIn people",     f"https://www.linkedin.com/search/results/people/?keywords={e}"),
-        ("Reddit",              f"https://www.reddit.com/search/?q={e}"),
-        ("YouTube",             f"https://www.youtube.com/results?search_query={e}"),
-        ("Pinterest",           f"https://www.pinterest.com/search/pins/?q={e}"),
-        ("Twitch",              f"https://www.twitch.tv/search?term={e}"),
-        ("Telegram",            f"https://t.me/s/{q}"),
-        ("Discord (Google)",    f"https://www.google.com/search?q=site:discord.com+%22{e}%22"),
-        ("Snapchat",            f"https://www.snapchat.com/add/{q}"),
-    ]: link(plat,lnk,LM)
-    pause()
-
-# ──────────────────────────────────────────────
-#  ㉚ DARK WEB SEARCH LINKS
-# ──────────────────────────────────────────────
 
 def darkweb_search():
     show_logo("breach")
     print(LR+"  Clearnet search engines that index .onion content.\n")
-    q=input(LC+"  Search term > ").strip()
-    e=qenc(q)
+    q=input(LC+"  Search term > ").strip(); e=qenc(q)
     section("DARK WEB SEARCH ENGINES",LR)
     for name,lnk in [
         ("Ahmia (clearnet)", f"https://ahmia.fi/search/?q={e}"),
         ("DarkSearch",       f"https://darksearch.io/search?query={e}"),
-        ("Onion Search",     f"https://onionsearchengine.com/search.php?q={e}"),
         ("DeHashed",         f"https://dehashed.com/search?query={e}"),
         ("IntelX",           f"https://intelx.io/?s={e}"),
-        ("Psbdmp",           f"https://psbdmp.ws/api/search/{e}"),
     ]: link(name,lnk,LR)
     pause()
 
-# ──────────────────────────────────────────────
-#  ㉛ CVE / VULN SEARCH
-# ──────────────────────────────────────────────
-
 def vuln_search():
     show_logo("port")
-    q=input(LR+"  Software / CVE ID > ").strip()
-    e=qenc(q)
+    q=input(LR+"  Software / CVE ID > ").strip(); e=qenc(q)
     section("VULN SEARCH LINKS",LR)
     for name,lnk in [
         ("NVD (NIST)",       f"https://nvd.nist.gov/vuln/search/results?query={e}"),
@@ -1909,40 +2550,46 @@ def vuln_search():
     ]: link(name,lnk,LR)
     pause()
 
-# ──────────────────────────────────────────────
-#  ㉜ OSINT FRAMEWORK NAVIGATOR
-# ──────────────────────────────────────────────
+def reverse_image():
+    show_logo("user")
+    url=input(LM+"  Image URL > ").strip()
+    if not url: pause(); return
+    e=qenc(url)
+    section("REVERSE IMAGE SEARCH LINKS",LM)
+    for name,lnk in [
+        ("Google Images", f"https://www.google.com/searchbyimage?image_url={e}"),
+        ("Yandex Images", f"https://yandex.com/images/search?url={e}&rpt=imageview"),
+        ("TinEye",        f"https://tineye.com/search?url={e}"),
+        ("SauceNAO",      f"https://saucenao.com/search.php?url={e}"),
+    ]: link(name,lnk,LM)
+    pause()
 
 def osint_framework():
     show_logo("user")
     section("KEY OSINT RESOURCES",LM)
     for name,lnk in [
-        ("OSINT Framework",   "https://osintframework.com"),
-        ("IntelTechniques",   "https://inteltechniques.com/tools/index.html"),
-        ("ZSearcher.fr",      "https://zsearcher.fr/"),
-        ("OathNet.org",       "https://oathnet.org/"),
-        ("Shodan",            "https://www.shodan.io"),
-        ("Censys",            "https://search.censys.io"),
-        ("HaveIBeenPwned",    "https://haveibeenpwned.com"),
-        ("URLScan.io",        "https://urlscan.io"),
-        ("VirusTotal",        "https://www.virustotal.com"),
-        ("Wayback Machine",   "https://web.archive.org"),
-        ("BGPView",           "https://bgpview.io"),
-        ("Grep.app",          "https://grep.app"),
-        ("DeHashed",          "https://dehashed.com"),
-        ("IntelX",            "https://intelx.io"),
-        ("LeakIX",            "https://leakix.net"),
-        ("GrayHatWarfare",    "https://grayhatwarfare.com"),
-        ("Maltego",           "https://www.maltego.com"),
-        ("Spiderfoot",        "https://www.spiderfoot.net"),
-        ("OTX AlienVault",    "https://otx.alienvault.com"),
-        ("Hunter.io",         "https://hunter.io"),
+        ("OSINT Framework",  "https://osintframework.com"),
+        ("IntelTechniques",  "https://inteltechniques.com/tools/index.html"),
+        ("ZSearcher.fr",     "https://zsearcher.fr/"),
+        ("OathNet.org",      "https://oathnet.org/"),
+        ("Shodan",           "https://www.shodan.io"),
+        ("Censys",           "https://search.censys.io"),
+        ("HaveIBeenPwned",   "https://haveibeenpwned.com"),
+        ("URLScan.io",       "https://urlscan.io"),
+        ("VirusTotal",       "https://www.virustotal.com"),
+        ("Wayback Machine",  "https://web.archive.org"),
+        ("BGPView",          "https://bgpview.io"),
+        ("Grep.app",         "https://grep.app"),
+        ("DeHashed",         "https://dehashed.com"),
+        ("IntelX",           "https://intelx.io"),
+        ("LeakIX",           "https://leakix.net"),
+        ("GrayHatWarfare",   "https://grayhatwarfare.com"),
+        ("OTX AlienVault",   "https://otx.alienvault.com"),
+        ("Hunter.io",        "https://hunter.io"),
+        ("crt.sh",           "https://crt.sh"),
+        ("SecurityTrails",   "https://securitytrails.com"),
     ]: link(name,lnk,LM)
     pause()
-
-# ──────────────────────────────────────────────
-#  ㉝ ARCHIVE / SCREENSHOT LINKS
-# ──────────────────────────────────────────────
 
 def archive_links():
     show_logo("geo")
@@ -1952,47 +2599,10 @@ def archive_links():
     section("ARCHIVE LINKS",LG)
     for name,lnk in [
         ("Wayback Machine", f"https://web.archive.org/web/*/{url}"),
-        ("Google Cache",    f"https://webcache.googleusercontent.com/search?q=cache:{url}"),
         ("Archive.ph",      f"https://archive.ph/{url}"),
-        ("TimeTravel",      f"http://timetravel.mementoweb.org/timemap/link/{url}"),
-    ]: link(name,lnk,LG)
-    section("SCREENSHOT SERVICES",LG)
-    for name,lnk in [
-        ("ScreenshotMachine",f"https://www.screenshotmachine.com/?url={e}"),
-        ("PagePeeker",       f"https://pagepeeker.com/v2/thumbs.php?size=x&url={e}"),
-        ("Thumbnail.ws",     f"https://thumbnail.ws/api/thumbnail.png?url={e}&width=1280"),
+        ("Google Cache",    f"https://webcache.googleusercontent.com/search?q=cache:{url}"),
     ]: link(name,lnk,LG)
     pause()
-
-# ──────────────────────────────────────────────
-#  ㉞ ADVANCED DORK BUILDER
-# ──────────────────────────────────────────────
-
-def adv_dork():
-    show_logo("dork")
-    print(LY+"  Build a custom Google dork.\n")
-    site   =input(LY+"  site:     > ").strip()
-    inurl  =input(LY+"  inurl:    > ").strip()
-    intitle=input(LY+"  intitle:  > ").strip()
-    intext =input(LY+"  intext:   > ").strip()
-    ext    =input(LY+"  ext:      > ").strip()
-    kw     =input(LY+"  keyword   > ").strip()
-    parts=[]
-    if site:    parts.append(f"site:{site}")
-    if inurl:   parts.append(f"inurl:{inurl}")
-    if intitle: parts.append(f"intitle:{intitle}")
-    if intext:  parts.append(f"intext:{intext}")
-    if ext:     parts.append(f"ext:{ext}")
-    if kw:      parts.append(f'"{kw}"')
-    dork=" ".join(parts)
-    section("YOUR DORK",LY)
-    print(LY+f"  {dork}")
-    print(LW+f"\n  Search: https://www.google.com/search?q={qenc(dork)}")
-    pause()
-
-# ──────────────────────────────────────────────
-#  ㉟ URL REDIRECT TRACER
-# ──────────────────────────────────────────────
 
 def url_tracer():
     show_logo("geo")
@@ -2007,1137 +2617,1090 @@ def url_tracer():
     except Exception as e: print(LR+f"  Failed: {e}")
     pause()
 
-# ──────────────────────────────────────────────
-#  ㊱ PUBLIC RECORDS SEARCH
-# ──────────────────────────────────────────────
-
 def public_records():
     show_logo("user")
-    q=input(LM+"  Name / email / username > ").strip()
-    e=qenc(q)
+    q=input(LM+"  Name / email / username > ").strip(); e=qenc(q)
     section("PUBLIC RECORD SEARCH LINKS",LM)
     for name,lnk in [
         ("Spokeo",           f"https://www.spokeo.com/search?q={e}"),
-        ("PeopleFinder",     f"https://www.peoplefinder.com/people?q={e}"),
         ("TruePeopleSearch", f"https://www.truepeoplesearch.com/results?name={e}"),
         ("WhitePages",       f"https://www.whitepages.com/name/{e}"),
         ("FastPeopleSearch", f"https://www.fastpeoplesearch.com/name/{e}"),
         ("LinkedIn",         f"https://www.google.com/search?q=site:linkedin.com+%22{e}%22"),
         ("Twitter",          f"https://twitter.com/search?q=%22{e}%22"),
-        ("Facebook",         f"https://www.facebook.com/search/top/?q={e}"),
         ("ZSearcher.fr",     f"https://zsearcher.fr/search?q={e}"),
         ("OathNet.org",      f"https://oathnet.org/search?q={e}"),
     ]: link(name,lnk,LM)
     pause()
 
-# ──────────────────────────────────────────────
-#  ㊲ REVERSE IMAGE SEARCH
-# ──────────────────────────────────────────────
-
-def reverse_image():
-    show_logo("user")
-    url=input(LM+"  Image URL > ").strip()
-    if not url: pause(); return
-    e=qenc(url)
-    section("REVERSE IMAGE SEARCH LINKS",LM)
-    for name,lnk in [
-        ("Google Images",  f"https://www.google.com/searchbyimage?image_url={e}"),
-        ("Bing Visual",    f"https://www.bing.com/images/search?q=imgurl:{e}&iss=sbi"),
-        ("Yandex Images",  f"https://yandex.com/images/search?url={e}&rpt=imageview"),
-        ("TinEye",         f"https://tineye.com/search?url={e}"),
-        ("SauceNAO",       f"https://saucenao.com/search.php?url={e}"),
-        ("IQDB",           f"https://iqdb.org/?url={e}"),
-    ]: link(name,lnk,LM)
+def file_osint():
+    show_logo("dork")
+    domain=input(LY+"  Domain > ").strip()
+    section("FILE SEARCH LINKS",LY)
+    for label,ext in [
+        ("PDF","pdf"),("Word","doc OR docx"),("Excel","xls OR xlsx"),
+        ("CSV","csv"),("SQL","sql"),("ENV","env"),("LOG","log"),
+        ("BAK","bak"),("ZIP","zip"),("CONFIG","conf OR config"),
+    ]:
+        q=qenc(f"site:{domain} ext:{ext}")
+        print(LY+f"  {label:<12}"+LW+f" https://www.google.com/search?q={q}")
     pause()
 
-# ──────────────────────────────────────────────
-#  CONTACT
-# ──────────────────────────────────────────────
+def public_cameras():
+    show_logo("cam")
+    print(LR+"  Searches for publicly indexed camera feeds.\n")
+    location=input(LC+"  Location (city/country, blank to skip) > ").strip()
+    section("SHODAN CAMERA SEARCHES",LR)
+    queries=[
+        ("Webcams generic",   "has_screenshot:true port:80"),
+        ("Hikvision cameras", "server:Hikvision-Webs"),
+        ("RTSP streams",      "port:554 has_screenshot:true"),
+    ]
+    for name,q in queries:
+        full_q=q+(f" city:{location}" if location else "")
+        print(LR+f"  {name:<28}"+LW+f" https://www.shodan.io/search?query={qenc(full_q)}")
+    section("PUBLIC CAMERA DIRECTORIES",LR)
+    for name,lnk in [
+        ("Insecam",    "http://www.insecam.org/"),
+        ("EarthCam",   "https://www.earthcam.com/"),
+        ("Windy cams", "https://www.windy.com/"),
+    ]: link(name,lnk,LR)
+    pause()
 
 def contact():
     clear()
-    print(LG+r"""
-   ██████╗ ██████╗ ███╗   ██╗████████╗ █████╗  ██████╗████████╗
-  ██╔════╝██╔═══██╗████╗  ██║╚══██╔══╝██╔══██╗██╔════╝╚══██╔══╝
-  ██║     ██║   ██║██╔██╗ ██║   ██║   ███████║██║        ██║
-  ██║     ██║   ██║██║╚██╗██║   ██║   ██╔══██║██║        ██║
-  ╚██████╗╚██████╔╝██║ ╚████║   ██║   ██║  ██║╚██████╗   ██║
-   ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝   ╚═╝
-                                                  By camzzz""")
-    print(); print(LG+"  "+"─"*68); print()
+    print(LG+"\n  CONTACT — By camzzz")
+    print(LG+"  "+"="*40)
     row("Discord","cameleonmortis",   LC,LW)
     row("GitHub", "https://github.com/cameleonnbss/50-multi-tool",LC,LW)
     print()
-    for line in CAMZZZ_LINES: rainbow(line)
+    for line in CAMZZZ_LINES: rainbow("  "+line)
     print(); pause()
-
-# ──────────────────────────────────────────────
-#  FSOCIETY
-# ──────────────────────────────────────────────
-
-def fsociety():
-    clear(); matrix_rain(4,72)
-    print(LG+r"""
-fsociety                                             By camzzz
-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-XX                                                                          XX
-XX   MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM   XX
-XX   MMMMMMMMMMMMMMMMMMMMMssssssssssssssssssssssssssMMMMMMMMMMMMMMMMMMMMM   XX
-XX   MMMMMMMMMMMMMMMMss'''                          '''ssMMMMMMMMMMMMMMMM   XX
-XX   MMMMMMMMMMMMyy''                                    ''yyMMMMMMMMMMMM   XX
-XX   MMMMMMMMyy''                                            ''yyMMMMMMMM   XX
-XX   MMMMMy''                                                    ''yMMMMM   XX
-XX   MMMy'                                                          'yMMM   XX
-XX   Mh'                                                              'hM   XX
-XX   MMhh.        ..hhhhhh..                      ..hhhhhh..        .hhMM   XX
-XX   MMMMMh   ..hhMMMMMMMMMMhh.                .hhMMMMMMMMMMhh..   hMMMMM   XX
-XX   ---MMM .hMMMMdd:::dMMMMMMMhh..        ..hhMMMMMMMd:::ddMMMMh. MMM---   XX
-XX   MMMMMM MMmm''      'mmMMMMMMMMyy.  .yyMMMMMMMMmm'      ''mmMM MMMMMM   XX
-XX   ---mMM ''             'mmMMMMMMMM  MMMMMMMMmm'             '' MMm---   XX
-XX   yyyym'    .              'mMMMMm'  'mMMMMm'              .    'myyyy   XX
-XX   mm''    .y'     ..yyyyy..  ''''      ''''  ..yyyyy..     'y.    ''mm   XX
-XX           MN    .sMMMMMMMMMss.   .    .   .ssMMMMMMMMMs.    NM           XX
-XX           N`    MMMMMMMMMMMMMN   M    M   NMMMMMMMMMMMMM    `N           XX
-XX     MMMMMMMMMNN+++NNMMMMMMMMMMMMMMNNNNMMMMMMMMMMMMMMNN+++NNMMMMMMMMM     XX
-XX     yMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMy     XX
-XX   MMMMd   ''''hhhhh       odddo          obbbo        hhhh''''   dMMMM   XX
-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-    .o88o.                               o8o                .
-    888 `"                               `"'              .o8
-   o888oo   .oooo.o  .ooooo.   .ooooo.  oooo   .ooooo.  .o888oo oooo    ooo
-    888    d88(  "8 d88' `88b d88' `"Y8 `888  d88' `88b   888    `88.  .8'
-    888    `"Y88b.  888   888 888        888  888ooo888   888     `88..8'
-   o888o   8""888P' `Y8bod8P' `Y8bod8P' o888o `Y8bod8P'   "888"      d8'
-                                                                `XER0'""")
-    print()
-    for line in CAMZZZ_LINES: rainbow(line)
-    pause()
 
 # ──────────────────────────────────────────────
 #  MENU
 # ──────────────────────────────────────────────
 
+# ══════════════════════════════════════════════════════════════
+#  APIS BREACH AVEC CLÉ GRATUITE
+# ══════════════════════════════════════════════════════════════
 
 # ──────────────────────────────────────────────
-#  PHONE SOCIAL SCANNER  (from AltTool menu 12)
+#  LEAKCHECK API  (free tier : 50 req/mois)
+#  Clé gratuite sur : https://leakcheck.io
+#  7.5 milliards de records, 3000+ bases
 # ──────────────────────────────────────────────
 
-def phone_social_scanner():
-    show_logo("phone")
-    print(LC + "  Scans 20+ platforms for accounts linked to a phone number.")
-    print(LC + "  Uses public search — no API keys needed.\n")
+# LEAKCHECK_KEY est charge automatiquement depuis config.ini
 
-    number = input(LC + "  Phone number (with + country code) > ").strip()
-    if not number: pause(); return
+def leakcheck_api():
+    show_logo("breach")
+    print(LR + "  LeakCheck API  —  7.5B+ records  —  3000+ bases")
+    print(LR + "  Free tier : 50 requetes/mois  —  Cle gratuite sur leakcheck.io\n")
 
-    digits  = re.sub(r"\D", "", number)
-    no_plus = number.lstrip("+")
-    e       = qenc(number)
-    d       = qenc(digits)
+    global LEAKCHECK_KEY
+    key = LEAKCHECK_KEY.strip()
+    if not key:
+        print(LY + "  Aucune cle LeakCheck trouvee dans config.ini")
+        print(LY + "  Inscription gratuite : https://leakcheck.io\n")
+        key = input(LY + "  Entre ta cle LeakCheck (ou ENTER pour annuler) > ").strip()
+        if not key:
+            print(LR + "  Cle requise.")
+            pause(); return
+        # Sauvegarde automatique SANS demander
+        save_key("leakcheck_key", key)
+        LEAKCHECK_KEY = key
+        print(LG + "  [OK]  Cle sauvegardee dans config.ini — ne sera plus jamais redemandee.")
 
-    # detect country
-    info = None; matched = ""
-    for prefix in sorted(PHONE_DB.keys(), key=lambda x: -len(x)):
-        if number.startswith(prefix):
-            info = PHONE_DB[prefix]; matched = prefix; break
+    print(LR + "\n  1  Recherche email\n"
+               "  2  Recherche username\n"
+               "  3  Recherche domaine\n"
+               "  4  Recherche telephone\n"
+               "  5  Recherche hash (SHA256 email)\n"
+               "  6  Infos sur ton compte (credits restants)\n")
+    c = input(LC + "  Choice > ").strip()
 
-    section("NUMBER INFO", LC)
-    row("Number",      number,                    LC, LW)
-    row("Country code",matched or "Unknown",       LC, LW)
-    if info:
-        row("Country", info["country"],            LC, LG)
-        row("Region",  info["region"],             LC, LG)
-        row("Timezone",info["tz"],                 LC, LW)
-
-    section("PLATFORM SEARCH LINKS", LC)
-    print(LC + "  Open these links to check if the number is linked to an account:\n")
-
-    platforms = [
-        # Messaging
-        ("WhatsApp",          f"https://wa.me/{digits}",                           LG),
-        ("Telegram",          f"https://t.me/{no_plus}",                           LC),
-        ("Signal (Google)",   f"https://www.google.com/search?q=signal+%22{e}%22", LW),
-        ("Viber (Google)",    f"https://www.google.com/search?q=viber+%22{e}%22",  LW),
-        # Social
-        ("Facebook",          f"https://www.facebook.com/search/top/?q={e}",       LC),
-        ("Twitter/X",         f"https://twitter.com/search?q=%22{e}%22&f=live",    LC),
-        ("Instagram (Google)",f"https://www.google.com/search?q=site:instagram.com+%22{e}%22", LW),
-        ("TikTok (Google)",   f"https://www.google.com/search?q=site:tiktok.com+%22{e}%22",    LW),
-        ("Snapchat (Google)", f"https://www.google.com/search?q=site:snapchat.com+%22{e}%22",  LW),
-        ("LinkedIn",          f"https://www.linkedin.com/search/results/people/?keywords={e}", LC),
-        ("Reddit (Google)",   f"https://www.google.com/search?q=site:reddit.com+%22{e}%22",    LW),
-        ("Discord (Google)",  f"https://www.google.com/search?q=site:discord.com+%22{e}%22",   LW),
-        ("Telegram (Google)", f"https://www.google.com/search?q=site:t.me+%22{e}%22",          LW),
-        # Reverse lookup
-        ("TrueCaller",        f"https://www.truecaller.com/search/fr/{d}",          LY),
-        ("Sync.me",           f"https://sync.me/search/?number={e}",                LY),
-        ("NumLookup",         f"https://www.numlookup.com/?number={e}",             LY),
-        ("Spokeo",            f"https://www.spokeo.com/phone/{d}",                  LY),
-        ("WhitePages",        f"https://www.whitepages.com/phone/{d}",              LY),
-        ("FastPeopleSearch",  f"https://www.fastpeoplesearch.com/phone/{d}",        LY),
-        ("TruePeopleSearch",  f"https://www.truepeoplesearch.com/resultsphonesearch?phoneno={d}", LY),
-        # Dating / classifieds
-        ("Craigslist (Google)",f"https://www.google.com/search?q=site:craigslist.org+%22{e}%22", LM),
-        ("Leboncoin (Google)", f"https://www.google.com/search?q=site:leboncoin.fr+%22{e}%22",   LM),
-        ("Badoo (Google)",     f"https://www.google.com/search?q=site:badoo.com+%22{e}%22",      LM),
-        # Leaks
-        ("ZSearcher.fr",       f"https://zsearcher.fr/search?q={d}",               LR),
-        ("OathNet.org",        f"https://oathnet.org/search?q={e}",                LR),
-        ("DeHashed",           f"https://dehashed.com/search?query={e}",           LR),
-        ("IntelX",             f"https://intelx.io/?s={e}",                        LR),
-        ("Google (number)",    f"https://www.google.com/search?q=%22{e}%22",       LW),
-        ("Google (digits)",    f"https://www.google.com/search?q=%22{d}%22",       LW),
-        ("Pastebin (Google)",  f"https://www.google.com/search?q=site:pastebin.com+%22{e}%22", LW),
-        ("GitHub code",        f"https://github.com/search?q={e}&type=code",       LW),
-    ]
-
-    cats = {
-        "MESSAGING": platforms[:4],
-        "SOCIAL MEDIA": platforms[4:13],
-        "REVERSE LOOKUP": platforms[13:20],
-        "DATING / CLASSIFIEDS": platforms[20:23],
-        "BREACH / LEAK DBs": platforms[23:],
-    }
-    for cat, items in cats.items():
-        print(col_cat := LC, end="")
-        print(f"\n  ── {cat} {'─'*(52-len(cat))}")
-        for name, url, col in items:
-            print(col + f"  {name:<28}" + LW + f" {url}")
-
-    section("OSINT TOOLS FOR PHONE", LC)
-    for name, lnk in [
-        ("PhoneInfoga (local tool)", "https://github.com/sundowndev/phoneinfoga"),
-        ("Ignorant (local tool)",    "https://github.com/megadose/ignorant"),
-        ("Moriarty-Project",         "https://github.com/AzizKpln/Moriarty-Project"),
-    ]: link(name, lnk, LG)
-    pause()
-
-
-# ──────────────────────────────────────────────
-#  EMAIL ACCOUNT CHECKER  (AltTool menu 13)
-# ──────────────────────────────────────────────
-
-def email_account_checker():
-    show_logo("mail")
-    print(LM + "  Checks which platforms have an account for this email.")
-    print(LM + "  Uses password-reset endpoints — read-only, no login.\n")
-
-    email = input(LM + "  Email address > ").strip()
-    if "@" not in email: print(LR + "  Invalid email."); pause(); return
-
-    sites = {
-        "Facebook":   "https://www.facebook.com/recover/initiate",
-        "Twitter":    "https://twitter.com/account/begin_password_reset",
-        "Instagram":  "https://www.instagram.com/accounts/password/reset/",
-        "Snapchat":   "https://accounts.snapchat.com/accounts/password/reset",
-        "Pinterest":  "https://www.pinterest.com/reset/",
-        "TikTok":     "https://www.tiktok.com/login/forgot-password",
-        "Reddit":     "https://www.reddit.com/password",
-        "Tumblr":     "https://www.tumblr.com/login/forgot",
-        "YouTube":    "https://www.youtube.com/account_recovery",
-        "GitHub":     "https://github.com/password_reset",
-        "LinkedIn":   "https://www.linkedin.com/uas/request-password-reset",
-        "Discord":    "https://discord.com/api/v9/auth/forgot",
-        "Spotify":    "https://accounts.spotify.com/en/password-reset",
-        "Netflix":    "https://www.netflix.com/password",
-        "Amazon":     "https://www.amazon.com/ap/forgotpassword",
-        "Microsoft":  "https://account.live.com/password/reset",
-        "Apple":      "https://iforgot.apple.com/password/verify/appleid",
-        "Dropbox":    "https://www.dropbox.com/forgot",
-        "Twitch":     "https://www.twitch.tv/user/password_reset",
-        "Steam":      "https://store.steampowered.com/login/forgotpassword",
+    SEARCH_TYPES = {
+        "1": ("email",    "Email > "),
+        "2": ("username", "Username > "),
+        "3": ("domain",   "Domaine > "),
+        "4": ("phone",    "Telephone (ex: +33612345678) > "),
+        "5": ("hash",     "SHA256 hash d'email > "),
     }
 
-    bar("  Scanning platforms", 30, 0.012, LM, M)
-    print(LM + f"\n  Checking {len(sites)} platforms for '{email}'...\n")
-
-    found = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-
-    for site, reset_url in sites.items():
+    if c == "6":
+        spinner("Verification du compte LeakCheck", 1.0, LR)
         try:
-            resp = requests.post(reset_url, data={"email": email},
-                                 timeout=5, headers=headers,
-                                 allow_redirects=True)
-            text = resp.text.lower()
-            keywords = ["sent", "email", "recovery", "reset",
-                        "check your email", "verify", "we've sent"]
-            if any(k in text for k in keywords):
-                print(LG + f"  [+]  {site:<20}" + LW + " Account likely exists")
-                found.append(site)
+            r = requests.get("https://leakcheck.io/api/v2/query/test@test.com",
+                             headers={"X-API-Key": key}, timeout=10)
+            section("INFOS COMPTE LEAKCHECK", LR)
+            if r.status_code in [200, 404]:
+                hdrs = r.headers
+                remaining = hdrs.get("X-RateLimit-Remaining", "?")
+                limit     = hdrs.get("X-RateLimit-Limit", "?")
+                reset     = hdrs.get("X-RateLimit-Reset", "?")
+                row("Requetes restantes", remaining, LR, LG if str(remaining) != "0" else LR)
+                row("Limite mensuelle",   limit,     LR, LW)
+                row("Reset le",          reset,     LR, LW)
+                row("Statut cle",        "Valide [OK]", LR, LG)
+            elif r.status_code == 401:
+                print(LR + "  Cle invalide ou expiree.")
             else:
-                print(DIM + LW + f"  [ ]  {site}")
-        except Exception:
-            print(DIM + LW + f"  [?]  {site}")
-
-    section(f"RESULTS — {len(found)} ACCOUNT(S) FOUND", LM)
-    if found:
-        for s in found:
-            print(LG + f"  ✓  {s}")
-    else:
-        print(LM + "  No accounts found via password-reset method.")
-
-    section("BREACH SEARCH LINKS", LM)
-    e = qenc(email)
-    for name, lnk in [
-        ("ZSearcher.fr",    f"https://zsearcher.fr/search?q={e}"),
-        ("OathNet.org",     f"https://oathnet.org/search?q={e}"),
-        ("HaveIBeenPwned",  f"https://haveibeenpwned.com/account/{e}"),
-        ("DeHashed",        f"https://dehashed.com/search?query={e}"),
-        ("IntelX",          f"https://intelx.io/?s={e}"),
-    ]: link(name, lnk, LM)
-    pause()
-
-
-# ──────────────────────────────────────────────
-#  WIFI SCANNER  (AltTool menu 26)
-# ──────────────────────────────────────────────
-
-def wifi_scanner():
-    show_logo("geo")
-    print(LY + "  Scans nearby WiFi networks and analyses security.\n")
-
-    import platform as _plat, subprocess as _sub
-
-    os_type = _plat.system()
-    networks = []
-
-    spinner("Scanning WiFi networks", 1.5, LY)
-
-    try:
-        if os_type == "Windows":
-            result = _sub.run(
-                ["netsh", "wlan", "show", "networks", "mode=bssid"],
-                capture_output=True, text=True, timeout=12)
-            lines = result.stdout.split("\n")
-            current = None
-            for line in lines:
-                line = line.strip()
-                if line.startswith("SSID") and ":" in line and "BSSID" not in line:
-                    if current and current.get("ssid"):
-                        networks.append(current)
-                    ssid = line.split(":", 1)[1].strip()
-                    if ssid:
-                        current = {"ssid": ssid, "bssid": "N/A",
-                                   "signal": "N/A", "channel": "N/A",
-                                   "authentication": "N/A"}
-                elif current:
-                    for key, prefix in [("authentication","Authentication"),
-                                        ("signal","Signal"),
-                                        ("channel","Channel"),
-                                        ("bssid","BSSID")]:
-                        if prefix in line and ":" in line:
-                            current[key] = line.split(":", 1)[1].strip()
-            if current and current.get("ssid"):
-                networks.append(current)
-
-        elif os_type == "Linux":
-            result = _sub.run(
-                ["nmcli", "-t", "-f", "SSID,SIGNAL,CHAN,SECURITY",
-                 "dev", "wifi", "list"],
-                capture_output=True, text=True, timeout=10)
-            for line in result.stdout.strip().split("\n"):
-                if line:
-                    p = line.split(":")
-                    networks.append({
-                        "ssid":           p[0] if p[0] else "Hidden",
-                        "signal":         p[1] + "%" if len(p) > 1 else "N/A",
-                        "channel":        p[2] if len(p) > 2 else "N/A",
-                        "authentication": p[3] if len(p) > 3 else "N/A",
-                    })
-
-        elif os_type == "Darwin":
-            airport = ("/System/Library/PrivateFrameworks/"
-                       "Apple80211.framework/Versions/Current/Resources/airport")
-            result = _sub.run([airport, "-s"],
-                              capture_output=True, text=True, timeout=10)
-            for line in result.stdout.split("\n")[1:]:
-                if line.strip():
-                    p = line.split()
-                    if len(p) >= 3:
-                        networks.append({
-                            "ssid":           p[0],
-                            "signal":         p[2],
-                            "channel":        p[3] if len(p) > 3 else "N/A",
-                            "authentication": " ".join(p[6:]) if len(p) > 6 else "N/A",
-                        })
-    except Exception as ex:
-        print(LR + f"  Scan error: {ex}")
-
-    if not networks:
-        print(LR + "  No networks found. Make sure WiFi is enabled.")
+                print(LY + f"  HTTP {r.status_code}: {r.text[:100]}")
+        except Exception as ex:
+            print(LR + f"  Erreur: {ex}")
         pause(); return
 
-    section(f"FOUND {len(networks)} NETWORKS", LY)
-    print(LY + f"  {'#':<4} {'SSID':<30} {'Signal':<12} {'Channel':<10} {'Security'}")
-    print(LY + "  " + "─"*68)
-    for i, net in enumerate(networks, 1):
-        ssid  = net.get("ssid","?")[:28]
-        sig   = net.get("signal","?")
-        chan  = str(net.get("channel","?"))
-        auth  = net.get("authentication","?")[:20]
-        col   = LR if "OPEN" in auth.upper() or auth.upper() in ["","NONE"] else LG
-        print(LY + f"  {i:<4} {ssid:<30} {sig:<12} {chan:<10} " + col + auth)
+    if c not in SEARCH_TYPES:
+        print(LR + "  Option invalide."); pause(); return
 
-    section("SECURITY ANALYSIS", LY)
-    open_nets  = [n["ssid"] for n in networks if
-                  "OPEN" in n.get("authentication","").upper() or
-                  n.get("authentication","").upper() in ["","NONE","N/A"]]
-    wep_nets   = [n["ssid"] for n in networks if "WEP"  in n.get("authentication","").upper()]
-    wpa3_nets  = [n["ssid"] for n in networks if "WPA3" in n.get("authentication","").upper()]
-    wpa2_nets  = [n["ssid"] for n in networks if "WPA2" in n.get("authentication","").upper()]
+    stype, prompt = SEARCH_TYPES[c]
+    query = input(LC + f"  {prompt}").strip()
+    if not query: pause(); return
 
-    row("Total networks",    len(networks),   LY, LW)
-    row("Open (dangerous)",  len(open_nets),  LY, LR if open_nets  else LG)
-    row("WEP (weak)",        len(wep_nets),   LY, LR if wep_nets   else LG)
-    row("WPA2",              len(wpa2_nets),  LY, LG)
-    row("WPA3",              len(wpa3_nets),  LY, LG)
-
-    if open_nets:
-        print(LR + "\n  Open networks:")
-        for s in open_nets[:5]: print(LR + f"    - {s}")
-
-    secure = len(wpa2_nets) + len(wpa3_nets)
-    score  = int(secure / len(networks) * 100) if networks else 0
-    print(LY + f"\n  Security score: {score}/100  " +
-          (LG + "Good" if score >= 70 else LY + "Medium" if score >= 40 else LR + "Poor"))
-    pause()
-
-
-# ──────────────────────────────────────────────
-#  WEB VULNERABILITY SCANNER  (AltTool menu 25)
-#  Subset of the 40-scan AltScan — no active attacks
-# ──────────────────────────────────────────────
-
-def web_vuln_scanner():
-    show_logo("port")
-    print(LR + "  Passive web vulnerability scanner — 20 checks.\n")
-
-    url = input(LR + "  Target URL > ").strip()
-    if not url: pause(); return
-    if not url.startswith("http"): url = "https://" + url
-
-    results = []
-
-    def chk(label, fn):
-        try:
-            r = fn()
-            status, detail = r if isinstance(r, tuple) else ("INFO", r)
-        except Exception as ex:
-            status, detail = "ERR", str(ex)[:60]
-        col = LR if status == "VULN" else LY if status == "WARN" else LG
-        print(col + f"  [{status:<4}]  {label:<35}" + LW + f" {str(detail)[:60]}")
-        results.append((label, status, detail))
-
-    spinner(f"Connecting to {url}", 0.8, LR)
+    spinner(f"Recherche LeakCheck ({stype}): {query}", 1.5, LR)
 
     try:
-        resp = requests.get(url, timeout=10, verify=False,
-                            headers={"User-Agent": "Mozilla/5.0"})
-    except Exception as ex:
-        print(LR + f"  Cannot reach target: {ex}"); pause(); return
+        r = requests.get(
+            f"https://leakcheck.io/api/v2/query/{qenc(query)}",
+            headers={"X-API-Key": key},
+            params={"type": stype},
+            timeout=12
+        )
 
-    hdrs = resp.headers
-    text = resp.text.lower()
+        # Rate limit info
+        remaining = r.headers.get("X-RateLimit-Remaining", "?")
 
-    section("SECURITY HEADERS", LR)
-    for hdr, label in [
-        ("Strict-Transport-Security",   "HSTS"),
-        ("Content-Security-Policy",     "CSP"),
-        ("X-Frame-Options",             "X-Frame-Options"),
-        ("X-Content-Type-Options",      "X-Content-Type-Options"),
-        ("X-XSS-Protection",            "X-XSS-Protection"),
-        ("Referrer-Policy",             "Referrer-Policy"),
-        ("Permissions-Policy",          "Permissions-Policy"),
-    ]:
-        present = hdr in hdrs
-        status = "OK  " if present else "WARN"
-        col    = LG if present else LY
-        print(col + f"  [{status}]  {label:<35}" +
-              LW + f" {hdrs.get(hdr, 'MISSING')[:60]}")
-        results.append((label, status, hdrs.get(hdr, "MISSING")))
+        section(f"LEAKCHECK — {stype.upper()} — {query}", LR)
+        row("Query",   query,         LR, LW)
+        row("Type",    stype,         LR, LW)
+        row("Credits restants", remaining, LR, LG if str(remaining) != "0" else LR)
+        print()
 
-    section("SERVER INFO EXPOSURE", LR)
-    for hdr in ["Server", "X-Powered-By", "X-AspNet-Version", "X-Generator"]:
-        val = hdrs.get(hdr)
-        if val:
-            print(LY + f"  [WARN]  {hdr:<35}" + LW + f" {val[:60]}")
-            results.append((hdr, "WARN", val))
+        if r.status_code == 200:
+            data = r.json()
+            results = data.get("result", [])
+            found   = data.get("found", 0)
+            success = data.get("success", False)
 
-    section("SENSITIVE FILES", LR)
-    base = url.rstrip("/")
-    for path in ["/.env", "/.git/config", "/robots.txt", "/phpinfo.php",
-                 "/wp-config.php", "/.htaccess", "/config.php",
-                 "/backup.sql", "/admin", "/phpmyadmin"]:
-        try:
-            r2 = requests.get(base + path, timeout=5, verify=False,
-                              headers={"User-Agent": "Mozilla/5.0"})
-            if r2.status_code == 200 and len(r2.text) > 10:
-                print(LR + f"  [VULN]  Sensitive file exposed: {path}")
-                results.append((path, "VULN", f"HTTP 200 — {len(r2.text)} bytes"))
-        except Exception: pass
+            if not success or not results:
+                print(LG + f"  [OK]  Aucun resultat trouve pour '{query}'.")
+            else:
+                print(LR + f"  [!!!]  {found} entree(s) trouvee(s) !\n")
 
-    section("TECHNOLOGY DETECTION", LR)
-    techs = {
-        "WordPress": ["wp-content","wp-includes"],
-        "Drupal":    ["drupal","sites/default"],
-        "Joomla":    ["joomla","com_content"],
-        "Shopify":   ["shopify"],
-        "React":     ["react","__react"],
-        "Vue.js":    ["vue.js","v-"],
-        "Angular":   ["ng-","angular"],
-        "jQuery":    ["jquery"],
-        "Bootstrap": ["bootstrap"],
-        "PHP":       [".php","php"],
-        "Django":    ["csrfmiddlewaretoken"],
-        "Laravel":   ["laravel_session"],
-        "Nginx":     ["nginx"],
-        "Apache":    ["apache"],
-        "Cloudflare":["cf-ray","cloudflare"],
-    }
-    found_techs = []
-    hdrs_str = str(hdrs).lower()
-    for tech, sigs in techs.items():
-        if any(s in text or s in hdrs_str for s in sigs):
-            found_techs.append(tech)
-    if found_techs:
-        print(LC + "  Detected: " + LW + ", ".join(found_techs))
+                # Stats rapides
+                all_sources = list(set(r.get("sources", ["?"])[0] if r.get("sources") else "?" for r in results))
+                row("Sources uniques", len(all_sources), LR, LW)
 
-    section("DIRECTORY LISTING", LR)
-    for d in ["/", "/uploads/", "/images/", "/files/", "/backup/"]:
-        try:
-            r3 = requests.get(base + d, timeout=5, verify=False,
-                              headers={"User-Agent": "Mozilla/5.0"})
-            if any(ind in r3.text for ind in
-                   ["Index of", "Directory listing", "Parent Directory"]):
-                print(LR + f"  [VULN]  Directory listing enabled: {d}")
-                results.append((d, "VULN", "Directory listing"))
-        except Exception: pass
+                section("RESULTATS DETAILLES", LR)
+                for i, entry in enumerate(results[:30], 1):
+                    print(LR + f"\n  --- Entree #{i} ---")
+                    for field in ["email", "username", "password", "hash",
+                                  "name", "ip", "phone", "address", "domain"]:
+                        val = entry.get(field)
+                        if val and val not in ["", "N/A"]:
+                            col = LR if field == "password" else LW
+                            print(LR + f"  {field:<16}" + col + f" {str(val)[:70]}")
+                    sources = entry.get("sources", [])
+                    if sources:
+                        print(LC + f"  {'sources':<16}" + LY + f" {', '.join(sources[:5])}")
 
-    section("SUMMARY", LR)
-    vulns = [r for r in results if r[1] == "VULN"]
-    warns = [r for r in results if r[1] == "WARN"]
-    row("VULN findings", len(vulns), LR, LR)
-    row("WARN findings", len(warns), LY, LY)
-    row("Checks run",    len(results), LC, LW)
+                if len(results) > 30:
+                    print(LY + f"\n  ... et {len(results)-30} resultats de plus (limite affichage).")
 
-    # export
-    try:
-        save = input(LY + "\n  Save report to txt? [y/N] > ").strip().lower()
-        if save == "y":
-            fname = f"vuln_scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            with open(fname, "w") as f:
-                f.write(f"Scan: {url}\nDate: {datetime.now()}\n{'='*60}\n")
-                for label, status, detail in results:
-                    f.write(f"[{status}] {label}: {detail}\n")
-            print(LG + f"  Saved to {fname}")
-    except Exception: pass
-    pause()
+                # Export
+                try:
+                    save = input(LY + "\n  Sauvegarder les resultats? [y/N] > ").strip().lower()
+                    if save == "y":
+                        import json as _json
+                        fname = f"leakcheck_{stype}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                        with open(fname, "w") as f:
+                            _json.dump({"query": query, "type": stype,
+                                        "found": found, "results": results}, f, indent=2)
+                        print(LG + f"  Sauvegarde: {fname}")
+                except Exception: pass
 
-
-# ──────────────────────────────────────────────
-#  ADVANCED SECURITY / FIREWALL DETECTOR  (AltTool menu 27)
-# ──────────────────────────────────────────────
-
-def firewall_detector():
-    show_logo("port")
-    print(LC + "  Detects WAF, CDN, bot protection, SSL info, rate limiting.\n")
-
-    url = input(LC + "  Target URL > ").strip()
-    if not url: pause(); return
-    if not url.startswith("http"): url = "https://" + url
-
-    from urllib.parse import urlparse as _urlparse
-    hostname = _urlparse(url).netloc
-
-    spinner(f"Scanning {url}", 1.5, LC)
-
-    findings = {
-        "waf": [], "cdn": [], "bot": [],
-        "security_headers": {}, "server": [],
-        "ssl": [], "dns": [], "rate": [],
-    }
-
-    # ── Header scan
-    try:
-        methods = ["GET", "OPTIONS"]
-        all_hdrs = {}
-        for method in methods:
-            try:
-                r = requests.request(method, url, timeout=8,
-                                     headers={"User-Agent": "Mozilla/5.0"})
-                all_hdrs.update(r.headers)
-            except Exception: pass
-
-        WAF_SIGS = {
-            "Cloudflare":   ["cf-ray","cf-cache-status","__cf_bm"],
-            "AWS WAF":      ["x-amzn-requestid","x-amz-cf-id"],
-            "Akamai":       ["akamai","x-akamai"],
-            "Imperva":      ["x-iinfo","incap_ses","visid_incap"],
-            "Sucuri":       ["x-sucuri-id","x-sucuri-cache"],
-            "ModSecurity":  ["mod_security"],
-            "F5 BIG-IP":    ["f5","bigip","x-wa-info"],
-            "Barracuda":    ["barra","bni__"],
-            "FortiWeb":     ["fortigate","fortiweb"],
-            "Cloudfront":   ["x-amz-cf","cloudfront"],
-            "Fastly":       ["fastly","x-served-by"],
-            "Varnish":      ["x-varnish"],
-            "Wordfence":    ["wordfence"],
-            "DDoS-Guard":   ["ddos-guard"],
-        }
-        CDN_SIGS = {
-            "Cloudflare":  ["cloudflare","cf-"],
-            "Fastly":      ["fastly"],
-            "Akamai":      ["akamai"],
-            "CloudFront":  ["cloudfront","x-amz"],
-            "MaxCDN":      ["maxcdn"],
-            "BunnyCDN":    ["bunnycdn"],
-            "Sucuri":      ["sucuri"],
-        }
-        SEC_HDRS = {
-            "Strict-Transport-Security": "HSTS",
-            "Content-Security-Policy":   "CSP",
-            "X-Frame-Options":           "Clickjacking protection",
-            "X-Content-Type-Options":    "MIME sniffing protection",
-            "X-XSS-Protection":          "XSS filter",
-            "Referrer-Policy":           "Referrer policy",
-        }
-
-        for hdr, val in all_hdrs.items():
-            hl = hdr.lower(); vl = str(val).lower()
-            for waf, sigs in WAF_SIGS.items():
-                if any(s in hl or s in vl for s in sigs):
-                    if waf not in " ".join(findings["waf"]):
-                        findings["waf"].append(f"{waf} (header: {hdr})")
-            for cdn, sigs in CDN_SIGS.items():
-                if any(s in hl or s in vl for s in sigs):
-                    if cdn not in " ".join(findings["cdn"]):
-                        findings["cdn"].append(f"{cdn} (header: {hdr})")
-            for sh, desc in SEC_HDRS.items():
-                if hdr.lower() == sh.lower():
-                    findings["security_headers"][sh] = {"val": val, "desc": desc}
-            if hdr.lower() in ["server","x-powered-by","x-generator"]:
-                findings["server"].append(f"{hdr}: {val}")
-    except Exception as ex:
-        print(LR + f"  Header scan error: {ex}")
-
-    # ── Bot protection
-    try:
-        r2 = requests.get(url, timeout=8,
-                          headers={"User-Agent": "Mozilla/5.0"})
-        page = r2.text.lower()
-        BOT_SIGS = {
-            "reCAPTCHA":    ["recaptcha","google.com/recaptcha"],
-            "hCaptcha":     ["hcaptcha"],
-            "Cloudflare Turnstile": ["turnstile","challenges.cloudflare.com"],
-            "PerimeterX":   ["perimeterx","_px"],
-            "DataDome":     ["datadome"],
-        }
-        for bp, sigs in BOT_SIGS.items():
-            if any(s in page for s in sigs):
-                findings["bot"].append(bp)
-        if any(c in page for c in ["checking your browser","please wait","verifying you are human"]):
-            findings["bot"].append("JS Challenge (generic)")
-    except Exception: pass
-
-    # ── SSL
-    try:
-        ctx = ssl.create_default_context()
-        with ctx.wrap_socket(socket.socket(), server_hostname=hostname) as s:
-            s.settimeout(8); s.connect((hostname, 443))
-            cert = s.getpeercert()
-        findings["ssl"].append(f"Protocol: {s.version()}")
-        findings["ssl"].append(f"Cipher: {s.cipher()[0]}")
-        subj = dict(x[0] for x in cert.get("subject",[]))
-        if subj.get("commonName"):
-            findings["ssl"].append(f"CN: {subj['commonName']}")
-        findings["ssl"].append(f"Valid until: {cert.get('notAfter','N/A')}")
-    except Exception as ex:
-        findings["ssl"].append(f"SSL check failed: {ex}")
-
-    # ── DNS
-    try:
-        ip = socket.gethostbyname(hostname)
-        findings["dns"].append(f"IP: {ip}")
-        try:
-            rev = socket.gethostbyaddr(ip)
-            findings["dns"].append(f"Reverse DNS: {rev[0]}")
-        except Exception: pass
-    except Exception: pass
-
-    # ── Rate limiting quick test
-    try:
-        codes = []
-        for _ in range(8):
-            r3 = requests.get(url, timeout=4,
-                              headers={"User-Agent": "Mozilla/5.0"})
-            codes.append(r3.status_code)
-            time.sleep(0.1)
-        if 429 in codes:
-            findings["rate"].append("Rate limiting active (429 detected)")
-        elif codes.count(503) > 2:
-            findings["rate"].append("Possible rate limiting (503 repeated)")
+        elif r.status_code == 401:
+            print(LR + "  Cle API invalide ou expiree.")
+            print(LY + "  Renouvelle ta cle sur https://leakcheck.io")
+        elif r.status_code == 429:
+            print(LY + "  Rate limit atteint (50 req/mois sur free tier).")
+            print(LY + "  Prochaine reset visible dans les headers.")
+        elif r.status_code == 404:
+            print(LG + f"  [OK]  Aucun resultat pour '{query}'.")
         else:
-            findings["rate"].append("No rate limiting detected in quick test")
-    except Exception: pass
+            print(LY + f"  HTTP {r.status_code}: {r.text[:200]}")
 
-    # ── Display
-    clear()
-    show_logo("port")
-    print(LC + f"  Target: {url}")
-    print(LC + f"  Scanned: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    except Exception as ex:
+        print(LR + f"  Erreur: {ex}")
 
-    for cat, title, col in [
-        ("waf",    "WAF / FIREWALL",        LR),
-        ("cdn",    "CDN SERVICES",          LC),
-        ("bot",    "BOT PROTECTION",        LM),
-        ("server", "SERVER INFO",           LY),
-        ("ssl",    "SSL / TLS",             LG),
-        ("dns",    "DNS",                   LY),
-        ("rate",   "RATE LIMITING",         LC),
-    ]:
-        section(title, col)
-        items = findings[cat]
-        if items:
-            for item in items:
-                print(col + f"  [+]  {item}")
-        else:
-            print(DIM + LW + "  None detected")
-
-    section("SECURITY HEADERS", LC)
-    all_sec = ["Strict-Transport-Security","Content-Security-Policy",
-               "X-Frame-Options","X-Content-Type-Options",
-               "X-XSS-Protection","Referrer-Policy"]
-    for sh in all_sec:
-        if sh in findings["security_headers"]:
-            info = findings["security_headers"][sh]
-            print(LG + f"  [OK]  {sh:<40}" + LW + f" {info['val'][:40]}")
-        else:
-            print(LR + f"  [!!]  {sh:<40}" + LW + " MISSING")
-
-    # Score
-    score = 0
-    if findings["waf"]:   score += 30
-    if findings["cdn"]:   score += 15
-    if len(findings["security_headers"]) >= 4: score += 25
-    elif len(findings["security_headers"]) > 0: score += 10
-    if findings["ssl"]:   score += 15
-    if findings["bot"]:   score += 10
-    if "active" in str(findings["rate"]).lower(): score += 5
-    score = min(score, 100)
-
-    section(f"SECURITY SCORE: {score}/100", LG if score>=70 else LY if score>=40 else LR)
-    bar_s = LG+"█"*int(score/5)+DIM+"░"*(20-int(score/5))
-    print(f"  {bar_s}  " + (LG+"Excellent" if score>=80 else LY+"Good" if score>=60 else LR+"Needs improvement"))
+    print()
+    print(LC + "  LeakCheck : https://leakcheck.io  |  7.5B+ records  |  3000+ bases")
     pause()
 
 
 # ──────────────────────────────────────────────
-#  FILE SCANNER  (AltTool menu 28)
+#  BREACHDIRECTORY (Logoutify) API
+#  Free : inscription + cle gratuite
+#  Clé sur : https://breachdirectory.com
+#  Email, username, IP, domaine
 # ──────────────────────────────────────────────
 
-def file_scanner():
-    show_logo("hash")
-    print(LM + "  Scans a file for suspicious strings, high entropy,")
-    print(LM + "  dangerous patterns, and calculates hashes.\n")
+def breachdirectory_api():
+    show_logo("breach")
+    print(LR + "  BreachDirectory API  —  Email / Username / IP / Domaine")
+    print(LR + "  Gratuite via RapidAPI (free tier disponible)")
+    print(LR + "  Cle sur : https://rapidapi.com/rohan-patra/api/breachdirectory\n")
 
-    filepath = input(LM + "  File path > ").strip().strip('"').strip("'")
-    if not filepath or not os.path.exists(filepath):
-        print(LR + "  File not found."); pause(); return
+    global BREACHDIR_KEY
+    key = BREACHDIR_KEY.strip()
+    if not key:
+        print(LY + "  Aucune cle BreachDirectory trouvee dans config.ini")
+        print(LY + "  Inscription gratuite sur RapidAPI :")
+        print(LC + "  https://rapidapi.com/rohan-patra/api/breachdirectory\n")
+        key = input(LY + "  Entre ta cle RapidAPI (ou ENTER pour annuler) > ").strip()
+        if not key:
+            pause(); return
+        # Sauvegarde automatique SANS demander
+        save_key("breachdirectory_key", key)
+        BREACHDIR_KEY = key
+        print(LG + "  [OK]  Cle sauvegardee dans config.ini — ne sera plus jamais redemandee.")
 
-    spinner("Analysing file", 1.0, LM)
+    print(LR + "\n  1  Recherche par email\n"
+               "  2  Recherche par username\n"
+               "  3  Recherche par IP\n"
+               "  4  Recherche par domaine\n")
+    c = input(LC + "  Choice > ").strip()
 
-    report = {
-        "path":      filepath,
-        "size":      os.path.getsize(filepath),
-        "md5":       "",
-        "sha256":    "",
-        "threats":   [],
-        "warnings":  [],
-    }
+    TYPES = {"1": "email", "2": "username", "3": "ip", "4": "domain"}
+    if c not in TYPES:
+        print(LR + "  Option invalide."); pause(); return
 
-    # Hashes
-    md5h = hashlib.md5(); sha256h = hashlib.sha256()
+    stype = TYPES[c]
+    query = input(LC + f"  {stype.title()} > ").strip()
+    if not query: pause(); return
+
+    spinner(f"Recherche BreachDirectory ({stype}): {query}", 1.5, LR)
+
     try:
-        with open(filepath, "rb") as f:
-            while chunk := f.read(8192):
-                md5h.update(chunk); sha256h.update(chunk)
-        report["md5"]    = md5h.hexdigest()
-        report["sha256"] = sha256h.hexdigest()
+        r = requests.get(
+            "https://breachdirectory.p.rapidapi.com/",
+            headers={
+                "X-RapidAPI-Key":  key,
+                "X-RapidAPI-Host": "breachdirectory.p.rapidapi.com"
+            },
+            params={"func": "auto", "term": query},
+            timeout=12
+        )
+
+        section(f"BREACHDIRECTORY — {stype.upper()} — {query}", LR)
+        row("Query", query, LR, LW)
+        row("Type",  stype, LR, LW)
+        print()
+
+        if r.status_code == 200:
+            data = r.json()
+            results = data if isinstance(data, list) else data.get("result", data.get("data", []))
+
+            if not results:
+                print(LG + f"  [OK]  Aucun resultat pour '{query}'.")
+            else:
+                print(LR + f"  [!!!]  {len(results)} entree(s) trouvee(s) !\n")
+                section("RESULTATS", LR)
+                for i, entry in enumerate(results[:25], 1):
+                    print(LR + f"\n  --- #{i} ---")
+                    if isinstance(entry, dict):
+                        for field in ["title", "email", "username", "password",
+                                      "hash", "ip", "name", "phone", "domain"]:
+                            val = entry.get(field)
+                            if val:
+                                col = LR if field == "password" else LW
+                                print(LR + f"  {field:<14}" + col + f" {str(val)[:70]}")
+                    else:
+                        print(LW + f"  {str(entry)[:80]}")
+
+                if len(results) > 25:
+                    print(LY + f"\n  ... et {len(results)-25} de plus.")
+
+                try:
+                    save = input(LY + "\n  Sauvegarder? [y/N] > ").strip().lower()
+                    if save == "y":
+                        import json as _json
+                        fname = f"breachdir_{stype}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                        with open(fname, "w") as f:
+                            _json.dump({"query": query, "type": stype, "results": results}, f, indent=2)
+                        print(LG + f"  Sauvegarde: {fname}")
+                except Exception: pass
+
+        elif r.status_code == 401 or r.status_code == 403:
+            print(LR + "  Cle invalide ou non autorisee.")
+        elif r.status_code == 429:
+            print(LY + "  Rate limit atteint sur ton plan RapidAPI.")
+        else:
+            print(LY + f"  HTTP {r.status_code}: {r.text[:200]}")
+
     except Exception as ex:
-        print(LR + f"  Hash error: {ex}"); pause(); return
+        print(LR + f"  Erreur: {ex}")
 
-    section("FILE INFO", LM)
-    row("Path",   filepath,            LM, LW)
-    row("Size",   f"{report['size']:,} bytes", LM, LW)
-    row("MD5",    report["md5"],       LM, LW)
-    row("SHA256", report["sha256"],    LM, LW)
+    print()
+    print(LC + "  BreachDirectory : https://breachdirectory.com")
+    print(LC + "  RapidAPI        : https://rapidapi.com/rohan-patra/api/breachdirectory")
+    pause()
 
-    # VirusTotal link
-    print(LM + f"\n  VT check: https://www.virustotal.com/gui/file/{report['sha256']}")
 
-    # String scan
-    SUSPICIOUS = [
-        b"cmd.exe", b"powershell", b"rundll32", b"regsvr32",
-        b"WScript.Shell", b"Shell.Application", b"HKEY_",
-        b"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
-        b"CreateRemoteThread", b"VirtualAllocEx", b"WriteProcessMemory",
-        b"ShellExecute", b"URLDownloadToFile", b"WinExec",
-        b"system(", b"exec(", b"eval(", b"base64",
-        b"encrypt", b"decrypt", b"ransom", b"bitcoin",
-        b"keylog", b"password", b"credentials",
-        b"wget ", b"curl ", b"chmod 777", b"/etc/passwd",
-        b"DROP TABLE", b"SELECT * FROM", b"UNION SELECT",
-        b"<script>", b"javascript:", b"onerror=",
-    ]
+# ══════════════════════════════════════════════════════════════
+#  OUTILS OPEN SOURCE RECONNUS (liens + infos d'utilisation)
+# ══════════════════════════════════════════════════════════════
 
+# ──────────────────────────────────────────────
+#  HOLEHE — vérifie si un email est utilisé
+#  sur 120+ plateformes via reset password
+#  github.com/megadose/holehe
+# ──────────────────────────────────────────────
+
+def holehe_tool():
+    show_logo("mail")
+    print(LM + "  Holehe — verifie si un email est utilise sur 120+ sites")
+    print(LM + "  Methode : reset password (read-only, aucune connexion)\n")
+    print(LM + "  Install : pip install holehe")
+    print(LM + "  Usage   : holehe <email>\n")
+
+    email = input(LM + "  Email a analyser > ").strip()
+    if "@" not in email:
+        print(LR + "  Email invalide."); pause(); return
+
+    # Tente d'utiliser holehe directement si installé
     try:
-        with open(filepath, "rb") as f:
-            content = f.read()
-        for sig in SUSPICIOUS:
-            if sig in content:
-                report["threats"].append(
-                    f"Suspicious string: {sig.decode('utf-8', errors='ignore')}")
-    except Exception as ex:
-        report["warnings"].append(f"String scan error: {ex}")
+        result = subprocess.run(
+            ["holehe", email, "--only-used"],
+            capture_output=True, text=True, timeout=120
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            section(f"HOLEHE — {email}", LM)
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if not line: continue
+                if "[+]" in line or "used" in line.lower():
+                    print(LG + f"  {line}")
+                elif "[-]" in line or "not used" in line.lower():
+                    print(DIM + LW + f"  {line}")
+                else:
+                    print(LM + f"  {line}")
+        elif result.returncode != 0:
+            raise FileNotFoundError("not installed")
+    except FileNotFoundError:
+        print(LY + "  Holehe n'est pas installe sur ce systeme.")
+        print(LY + "  Pour l'installer :\n")
+        print(LW + "    pip install holehe")
+        print(LW + "    holehe " + email + "\n")
+        print(LM + "  En attendant, liens de recherche rapide :\n")
+        e = qenc(email)
+        section(f"LIENS ALTERNATIFS — {email}", LM)
+        for name, lnk in [
+            ("Google",         f"https://www.google.com/search?q=%22{e}%22"),
+            ("GitHub code",    f"https://github.com/search?q={e}&type=code"),
+            ("Gravatar",       f"https://www.gravatar.com/avatar/{hashlib.md5(email.lower().encode()).hexdigest()}"),
+            ("EmailRep.io",    f"https://emailrep.io/{e}"),
+            ("HaveIBeenPwned", f"https://haveibeenpwned.com/account/{e}"),
+        ]: link(name, lnk, LM)
 
-    # Entropy check (high entropy = possibly packed/encrypted)
-    try:
-        import math
-        sample = content[:65536]
-        if sample:
-            freq = [0] * 256
-            for byte in sample: freq[byte] += 1
-            entropy = -sum((c/len(sample)) * math.log2(c/len(sample))
-                           for c in freq if c > 0)
-            row("Entropy", f"{entropy:.2f}/8.0", LM,
-                LR if entropy > 7.0 else LY if entropy > 6.0 else LG)
-            if entropy > 7.0:
-                report["threats"].append(f"Very high entropy ({entropy:.2f}) — possibly packed or encrypted")
-            elif entropy > 6.0:
-                report["warnings"].append(f"Elevated entropy ({entropy:.2f})")
-    except Exception: pass
-
-    # Extension check
-    ext = os.path.splitext(filepath)[1].lower()
-    dangerous_exts = [".exe",".dll",".sys",".scr",".bat",".cmd",
-                      ".vbs",".ps1",".jar",".msi",".com"]
-    if ext in dangerous_exts:
-        report["warnings"].append(f"Potentially executable file type: {ext}")
-
-    # Results
-    section("SCAN RESULTS", LM)
-    risk = "CRITICAL" if len(report["threats"]) >= 5 else \
-           "HIGH"     if len(report["threats"]) >= 3 else \
-           "MEDIUM"   if len(report["threats"]) >= 1 else \
-           "LOW"      if report["warnings"] else "CLEAN"
-
-    rcol = {
-        "CRITICAL": LR, "HIGH": LR, "MEDIUM": LY,
-        "LOW": LY, "CLEAN": LG
-    }[risk]
-
-    row("Risk level", risk, LM, rcol)
-    row("Threats",    len(report["threats"]),  LM, LR if report["threats"] else LG)
-    row("Warnings",   len(report["warnings"]), LM, LY if report["warnings"] else LG)
-
-    if report["threats"]:
-        section("THREATS DETECTED", LM)
-        for i, t in enumerate(report["threats"], 1):
-            print(LR + f"  [{i}]  {t}")
-
-    if report["warnings"]:
-        section("WARNINGS", LM)
-        for i, w in enumerate(report["warnings"], 1):
-            print(LY + f"  [{i}]  {w}")
-
-    if risk == "CLEAN":
-        print(LG + "\n  File appears clean based on static analysis.")
-
-    # Save JSON
-    try:
-        save = input(LY + "\n  Save JSON report? [y/N] > ").strip().lower()
-        if save == "y":
-            fname = f"file_scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            import json as _json
-            with open(fname, "w") as f:
-                _json.dump(report, f, indent=2)
-            print(LG + f"  Saved to {fname}")
-    except Exception: pass
+    section("RESSOURCES HOLEHE", LM)
+    for name, lnk in [
+        ("GitHub",       "https://github.com/megadose/holehe"),
+        ("PyPI",         "https://pypi.org/project/holehe/"),
+        ("Demo en ligne","https://github.com/megadose/holehe#usage"),
+    ]: link(name, lnk, LC)
     pause()
 
 
 # ──────────────────────────────────────────────
-#  ID / USERNAME TRACKER  (AltTool menu 14)
+#  H8MAIL — breach hunting par email
+#  github.com/khast3x/h8mail
+#  Supporte : HIBP, LeakCheck, Snusbase, etc.
 # ──────────────────────────────────────────────
 
-def id_tracker():
+def h8mail_tool():
+    show_logo("breach")
+    print(LR + "  h8mail — Password Breach Hunting & Email OSINT")
+    print(LR + "  Supporte : HIBP, LeakCheck, Snusbase, Hunter.io, etc.")
+    print(LR + "  github.com/khast3x/h8mail\n")
+
+    email = input(LR + "  Email cible > ").strip()
+    if "@" not in email:
+        print(LR + "  Email invalide."); pause(); return
+
+    # Tente d'utiliser h8mail si installé
+    try:
+        result = subprocess.run(
+            ["h8mail", "-t", email],
+            capture_output=True, text=True, timeout=90
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            section(f"H8MAIL — {email}", LR)
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if not line: continue
+                if any(x in line.upper() for x in ["FOUND","BREACH","LEAK","[+]"]):
+                    print(LR + f"  {line}")
+                elif any(x in line.upper() for x in ["[-]","NOT","NONE"]):
+                    print(DIM + LW + f"  {line}")
+                else:
+                    print(LY + f"  {line}")
+        else:
+            raise FileNotFoundError
+    except FileNotFoundError:
+        print(LY + "  h8mail n'est pas installe.")
+        print(LY + "  Pour l'installer :\n")
+        print(LW + "    pip install h8mail")
+        print(LW + "    h8mail -t " + email + "\n")
+
+    section("INSTALLATION H8MAIL", LR)
+    print(LW + "  pip install h8mail\n")
+    print(LW + "  Usage basique :")
+    print(LC + f"    h8mail -t {email}")
+    print(LW + "\n  Avec cles API (cree un fichier config.ini) :")
+    print(LC +  "    h8mail -t " + email + " -c config.ini\n")
+    print(LW + "  Exemple config.ini :")
+    print(DIM + "    [DEFAULT]\n"
+                "    hunterio = <ta_cle>\n"
+                "    leakcheck = <ta_cle>\n"
+                "    snusbase = <ta_cle>")
+
+    section("RESSOURCES H8MAIL", LR)
+    for name, lnk in [
+        ("GitHub",          "https://github.com/khast3x/h8mail"),
+        ("PyPI",            "https://pypi.org/project/h8mail/"),
+        ("Config examples", "https://github.com/khast3x/h8mail#config"),
+    ]: link(name, lnk, LC)
+    pause()
+
+
+# ──────────────────────────────────────────────
+#  SHERLOCK — username search sur 400+ sites
+#  github.com/sherlock-project/sherlock
+#  Le plus connu des username trackers
+# ──────────────────────────────────────────────
+
+def sherlock_tool():
     show_logo("user")
-    print(LM + "  Extended username/ID tracker — 40+ platforms.\n")
+    print(LM + "  Sherlock — Username OSINT sur 400+ plateformes")
+    print(LM + "  Le tracker de username le plus connu et maintenu")
+    print(LM + "  github.com/sherlock-project/sherlock\n")
 
-    user_id = input(LM + "  Username or ID > ").strip()
-    if not user_id: pause(); return
+    username = input(LM + "  Username > ").strip()
+    if not username: pause(); return
 
-    EXTENDED_SITES = SITES + [
-        ("Xbox Live",   f"https://account.xbox.com/en-US/Profile?GamerTag={user_id}"),
-        ("PlayStation", f"https://psnprofiles.com/{user_id}"),
-        ("Fortnite",    f"https://fortnitetracker.com/profile/all/{user_id}"),
-        ("DeviantArt",  f"https://www.deviantart.com/{user_id}"),
-        ("Last.fm",     f"https://www.last.fm/user/{user_id}"),
-        ("Mixcloud",    f"https://www.mixcloud.com/{user_id}"),
-        ("Bandcamp",    f"https://{user_id}.bandcamp.com"),
-        ("HackerOne",   f"https://hackerone.com/{user_id}"),
-        ("Slack",       f"https://{user_id}.slack.com"),
-        ("Blogger",     f"https://{user_id}.blogspot.com"),
+    # Tente d'utiliser sherlock si installé
+    try:
+        result = subprocess.run(
+            ["sherlock", username, "--print-found"],
+            capture_output=True, text=True, timeout=180
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            section(f"SHERLOCK — {username}", LM)
+            found_count = 0
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if not line: continue
+                if "[+]" in line:
+                    print(LG + f"  {line}"); found_count += 1
+                elif "[-]" in line:
+                    print(DIM + LW + f"  {line}")
+                elif "[*]" in line or "[!" in line:
+                    print(LY + f"  {line}")
+                else:
+                    print(LM + f"  {line}")
+            print(LM + f"\n  Total trouve : {found_count} profils")
+        else:
+            raise FileNotFoundError
+    except FileNotFoundError:
+        print(LY + "  Sherlock n'est pas installe.")
+        print(LY + "  Pour l'installer :\n")
+        print(LW + "    pip install sherlock-project")
+        print(LW + "    sherlock " + username + "\n")
+        print(LM + "  En attendant, le tracker integre (55+ sites) :")
+        print(LM + "  => Utilise l'option 26 du menu principal\n")
+
+    section("INSTALLATION SHERLOCK", LM)
+    print(LW + "  pip install sherlock-project\n")
+    print(LW + "  Usages :")
+    print(LC + f"    sherlock {username}                  # scan complet")
+    print(LC + f"    sherlock {username} --print-found    # affiche seulement les trouves")
+    print(LC + f"    sherlock {username} --timeout 5      # timeout par site")
+    print(LC + f"    sherlock {username} --output out.txt # exporte les resultats\n")
+
+    section("RESSOURCES SHERLOCK", LM)
+    for name, lnk in [
+        ("GitHub",     "https://github.com/sherlock-project/sherlock"),
+        ("PyPI",       "https://pypi.org/project/sherlock-project/"),
+        ("Sites list", "https://github.com/sherlock-project/sherlock/blob/master/sherlock_project/resources/data.json"),
+    ]: link(name, lnk, LC)
+    pause()
+
+
+# ──────────────────────────────────────────────
+#  THEHARVESTER — recon email/subdomain/IP
+#  github.com/laramies/theHarvester
+#  Outil de pentest classique, bien connu
+# ──────────────────────────────────────────────
+
+def theharvester_tool():
+    show_logo("sub")
+    print(LC + "  theHarvester — Email, Subdomain & IP Recon")
+    print(LC + "  Sources : Google, Bing, LinkedIn, Shodan, crt.sh, etc.")
+    print(LC + "  github.com/laramies/theHarvester\n")
+
+    print(LC + "  1  Recon sur un domaine\n"
+               "  2  Recon sur une organisation\n"
+               "  3  Infos installation\n")
+    c = input(LC + "  Choice > ").strip()
+
+    if c == "3":
+        section("INSTALLATION THEHARVESTER", LC)
+        print(LW + "  Via pip :")
+        print(LC + "    pip install theHarvester\n")
+        print(LW + "  Via git (version la plus a jour) :")
+        print(LC + "    git clone https://github.com/laramies/theHarvester")
+        print(LC + "    cd theHarvester && pip install -r requirements/base.txt\n")
+        print(LW + "  Usage basique :")
+        print(LC + "    theHarvester -d example.com -b google")
+        print(LC + "    theHarvester -d example.com -b all -l 500\n")
+        print(LW + "  Sources dispo (free sans cle) :")
+        print(LY + "    google, bing, duckduckgo, yahoo, crtsh, urlscan, dnsdumpster")
+        print(LW + "  Sources avec cle :")
+        print(LY + "    shodan, hunter, intelx, securityTrails, virustotal")
+        section("RESSOURCES", LC)
+        for name, lnk in [
+            ("GitHub",     "https://github.com/laramies/theHarvester"),
+            ("PyPI",       "https://pypi.org/project/theHarvester/"),
+            ("Wiki usage", "https://github.com/laramies/theHarvester/wiki"),
+        ]: link(name, lnk, LC)
+        pause(); return
+
+    if c in ["1", "2"]:
+        prompt = "Domaine (ex: example.com) > " if c == "1" else "Organisation (ex: Google) > "
+        target = input(LC + f"  {prompt}").strip()
+        if not target: pause(); return
+
+        sources = input(LC + "  Sources (ENTER = google,bing,crtsh) > ").strip()
+        if not sources: sources = "google,bing,crtsh"
+
+        limit = input(LC + "  Limite de resultats (ENTER = 200) > ").strip()
+        if not limit: limit = "200"
+
+        try:
+            cmd = ["theHarvester", "-d", target, "-b", sources, "-l", limit]
+            print(LY + f"\n  Lancement : {' '.join(cmd)}")
+            print(LY + "  (Ctrl+C pour arreter)\n")
+            result = subprocess.run(cmd, timeout=300, text=True)
+        except FileNotFoundError:
+            print(LY + "\n  theHarvester n'est pas installe.")
+            print(LY + "  Install : pip install theHarvester\n")
+
+            # Fallback : liens passifs
+            e = qenc(target)
+            section(f"RECON PASSIF — {target}", LC)
+            for name, lnk in [
+                ("crt.sh",        f"https://crt.sh/?q=%.{target}"),
+                ("URLScan",       f"https://urlscan.io/search/#{e}"),
+                ("DNSDumpster",   f"https://dnsdumpster.com/ (cherche: {target})"),
+                ("Shodan domain", f"https://www.shodan.io/domain/{target}"),
+                ("VirusTotal",    f"https://www.virustotal.com/gui/domain/{target}/relations"),
+                ("SecurityTrails",f"https://securitytrails.com/domain/{target}/subdomains"),
+                ("HunterIO",      f"https://hunter.io/domain-search/{target}"),
+                ("Google emails", f"https://www.google.com/search?q=site:{target}+intext:@{target}"),
+            ]: link(name, lnk, LC)
+        except subprocess.TimeoutExpired:
+            print(LY + "\n  Timeout (300s). Resultats partiels affiches.")
+        except KeyboardInterrupt:
+            print(LY + "\n  Interrompu.")
+
+    section("RESSOURCES THEHARVESTER", LC)
+    for name, lnk in [
+        ("GitHub",     "https://github.com/laramies/theHarvester"),
+        ("PyPI",       "https://pypi.org/project/theHarvester/"),
+    ]: link(name, lnk, LC)
+    pause()
+
+
+# ──────────────────────────────────────────────
+#  MAIGRET — username OSINT (fork Sherlock++)
+#  github.com/soxoj/maigret
+#  3000+ sites, profil complet, graphes
+# ──────────────────────────────────────────────
+
+def maigret_tool():
+    show_logo("user")
+    print(LM + "  Maigret — Username OSINT sur 3000+ sites")
+    print(LM + "  Fork avance de Sherlock avec profils complets")
+    print(LM + "  github.com/soxoj/maigret\n")
+
+    username = input(LM + "  Username > ").strip()
+    if not username: pause(); return
+
+    try:
+        cmd = ["maigret", username, "--print-found"]
+        print(LY + f"  Lancement : {' '.join(cmd)}\n")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode == 0 and result.stdout.strip():
+            section(f"MAIGRET — {username}", LM)
+            found = 0
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if not line: continue
+                if "[+]" in line or "Found" in line:
+                    print(LG + f"  {line}"); found += 1
+                elif "[-]" in line or "Not Found" in line:
+                    print(DIM + LW + f"  {line}")
+                else:
+                    print(LM + f"  {line}")
+            print(LM + f"\n  Total : {found} profils trouves")
+        else:
+            raise FileNotFoundError
+    except FileNotFoundError:
+        print(LY + "  Maigret n'est pas installe.")
+        print(LY + "  Install :\n")
+        print(LW + "    pip install maigret\n")
+        print(LW + "  Usages :")
+        print(LC + f"    maigret {username}                    # scan basique")
+        print(LC + f"    maigret {username} --print-found      # seulement trouves")
+        print(LC + f"    maigret {username} -P report/         # genere un rapport HTML")
+        print(LC + f"    maigret {username} --timeout 5\n")
+
+    section("RESSOURCES MAIGRET", LM)
+    for name, lnk in [
+        ("GitHub",          "https://github.com/soxoj/maigret"),
+        ("PyPI",            "https://pypi.org/project/maigret/"),
+        ("Sites supported", "https://github.com/soxoj/maigret/blob/main/sites.md"),
+    ]: link(name, lnk, LC)
+    pause()
+
+
+# ──────────────────────────────────────────────
+#  HUB OUTILS OPEN SOURCE
+#  Centralise tous les outils open source
+# ──────────────────────────────────────────────
+
+def open_source_hub():
+    show_logo("user")
+    print(LG + "  Hub des outils Open Source OSINT les plus connus\n")
+    print(LG + "  1  Holehe     — email sur 120+ sites (reset pwd)")
+    print(LG + "  2  h8mail     — breach hunting email multi-sources")
+    print(LG + "  3  Sherlock   — username sur 400+ plateformes")
+    print(LG + "  4  theHarvester — recon email/subdomain/IP")
+    print(LG + "  5  Maigret    — username sur 3000+ sites (fork Sherlock)")
+    print(LG + "  6  Infos + install de tous les outils\n")
+    c = input(LG + "  Choice > ").strip()
+    if   c == "1": holehe_tool()
+    elif c == "2": h8mail_tool()
+    elif c == "3": sherlock_tool()
+    elif c == "4": theharvester_tool()
+    elif c == "5": maigret_tool()
+    elif c == "6":
+        section("INSTALL TOUS LES OUTILS EN UNE FOIS", LG)
+        print(LW + "  Copie-colle dans ton terminal :\n")
+        print(LC + "    pip install holehe h8mail sherlock-project maigret theHarvester\n")
+        print(LW + "  Verification :")
+        print(LC + "    holehe --version\n"
+                   "    h8mail --version\n"
+                   "    sherlock --version\n"
+                   "    maigret --version\n"
+                   "    theHarvester --version\n")
+        section("LIENS GITHUB", LG)
+        for name, lnk in [
+            ("Holehe",       "https://github.com/megadose/holehe"),
+            ("h8mail",       "https://github.com/khast3x/h8mail"),
+            ("Sherlock",     "https://github.com/sherlock-project/sherlock"),
+            ("theHarvester", "https://github.com/laramies/theHarvester"),
+            ("Maigret",      "https://github.com/soxoj/maigret"),
+            ("Awesome OSINT","https://github.com/jivoi/awesome-osint"),
+        ]: link(name, lnk, LG)
+        pause()
+
+
+# ──────────────────────────────────────────────
+#  WORMGPT — IA integree au multi-tool
+#  Compatible OpenAI API format
+#  Cle gratuite sur : https://chat.wrmgpt.com
+# ──────────────────────────────────────────────
+
+WRMGPT_BASE   = "https://api.wrmgpt.com/v1"
+WORMGPT_MODEL = "gpt-3.5-turbo"
+
+WORMGPT_SYSTEM = (
+    "Tu es WormGPT, une IA integree dans un outil OSINT / pentest. "
+    "Tu es directe, technique, et tu reponds en francais. "
+    "Tu peux analyser des resultats OSINT, generer des dorks, "
+    "analyser des breaches, expliquer des concepts reseau/cyber, "
+    "et aider avec toutes les taches de l'outil. Sois concis et utile."
+)
+
+def wormgpt_tool():
+    show_logo("hash")
+    print(LR + "  WormGPT — IA integree au multi-tool")
+    print(LR + "  Compatible OpenAI API  |  chat.wrmgpt.com\n")
+
+    global WORMGPT_KEY
+    key = WORMGPT_KEY.strip()
+
+    if not key:
+        print(LY + "  Aucune cle WormGPT trouvee dans config.ini")
+        print(LY + "  1. Va sur https://chat.wrmgpt.com")
+        print(LY + "  2. Cree un compte gratuit")
+        print(LY + "  3. Dashboard > API Key > copie ta cle\n")
+        key = input(LY + "  Entre ta cle WormGPT (ou ENTER pour annuler) > ").strip()
+        if not key:
+            pause(); return
+        # Sauvegarde automatique SANS demander — plus jamais redemandee
+        save_key("wormgpt_key", key)
+        WORMGPT_KEY = key
+        print(LG + "  [OK]  Cle sauvegardee dans config.ini — ne sera plus jamais redemandee.")
+
+    print(LR + "\n  1  Chat libre avec WormGPT")
+    print(LR + "  2  Analyser un email / username OSINT")
+    print(LR + "  3  Analyser des resultats de breach")
+    print(LR + "  4  Expliquer un concept cyber / reseau")
+    print(LR + "  5  Analyser une IP / domaine")
+    print(LR + "  6  Generer un rapport OSINT complet (.txt)\n")
+    c = input(LR + "  Choice > ").strip()
+
+    PRE_PROMPTS = {
+        "2": ("Email / Username a analyser > ",
+              "Analyse cet email ou username d'un point de vue OSINT. "
+              "Donne des pistes de recherche, plateformes probables, "
+              "methodes et ce qu'on peut trouver. Sois precis et structure : "),
+        "3": ("Colle tes resultats de breach ici > ",
+              "Analyse ces resultats de data breach. Resume les donnees exposees, "
+              "evalue le niveau de risque (critique/haut/moyen/bas), et donne "
+              "des conseils pratiques concrets : "),
+        "4": ("Concept a expliquer > ",
+              "Explique ce concept de cybersecurite ou de reseau de facon claire "
+              "et technique, avec un exemple concret : "),
+        "5": ("IP ou domaine > ",
+              "Analyse cette IP ou ce domaine d'un point de vue OSINT/securite. "
+              "Quoi chercher, quels outils utiliser, quels indicateurs surveiller, "
+              "et quelles conclusions preliminaires tirer : "),
+        "6": ("Sujet du rapport OSINT > ",
+              "Genere un rapport OSINT complet et structure sur ce sujet. "
+              "Inclus : resume executif, methodologie, sources recommandees, "
+              "resultats attendus, et recommandations finales : "),
+    }
+
+    def call_wormgpt(messages):
+        r = requests.post(
+            f"{WRMGPT_BASE}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type":  "application/json",
+            },
+            json={
+                "model":       WORMGPT_MODEL,
+                "messages":    messages,
+                "max_tokens":  1024,
+                "temperature": 0.7,
+            },
+            timeout=30
+        )
+        return r
+
+    def display_response(reply, tokens="?"):
+        print()
+        print(LR + "  WormGPT :")
+        print()
+        for line in reply.split("\n"):
+            print(LW + f"  {line}")
+        print()
+        print(DIM + f"  [tokens: {tokens}]")
+        print()
+
+    def handle_error(r):
+        if r.status_code == 401:
+            print(LR + "  Cle API invalide ou expiree.")
+            print(LY + "  Verifie ta cle sur https://chat.wrmgpt.com")
+        elif r.status_code == 429:
+            print(LY + "  Rate limit atteint. Attends un peu.")
+        else:
+            print(LR + f"  Erreur API: HTTP {r.status_code}")
+            print(LY + f"  {r.text[:200]}")
+
+    # Chat libre multi-tour
+    if c == "1":
+        section("WormGPT — CHAT LIBRE", LR)
+        print(LR + "  Tape 'exit' pour quitter.\n")
+        history = [{"role": "system", "content": WORMGPT_SYSTEM}]
+        while True:
+            try:
+                user_input = input(LG + "  Toi > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print(); break
+            if user_input.lower() in ["exit", "quit", "q", ""]:
+                break
+            history.append({"role": "user", "content": user_input})
+            spinner("WormGPT reflechit...", 1.2, LR)
+            try:
+                r = call_wormgpt(history)
+                if r.status_code == 200:
+                    data  = r.json()
+                    reply = data["choices"][0]["message"]["content"].strip()
+                    tokens = data.get("usage", {}).get("total_tokens", "?")
+                    history.append({"role": "assistant", "content": reply})
+                    display_response(reply, tokens)
+                else:
+                    handle_error(r); break
+            except requests.exceptions.ConnectionError:
+                print(LR + "  Connexion impossible a api.wrmgpt.com")
+                print(LY + "  Verifie ta connexion internet."); break
+            except Exception as ex:
+                print(LR + f"  Erreur: {ex}"); break
+
+    # Modes pre-configures
+    elif c in PRE_PROMPTS:
+        label, inject = PRE_PROMPTS[c]
+        user_input = input(LR + f"  {label}").strip()
+        if not user_input: pause(); return
+        spinner("WormGPT analyse...", 1.5, LR)
+        try:
+            r = call_wormgpt([
+                {"role": "system", "content": WORMGPT_SYSTEM},
+                {"role": "user",   "content": inject + user_input},
+            ])
+            if r.status_code == 200:
+                data   = r.json()
+                reply  = data["choices"][0]["message"]["content"].strip()
+                tokens = data.get("usage", {}).get("total_tokens", "?")
+                mode_labels = {
+                    "2":"ANALYSE OSINT","3":"ANALYSE BREACH",
+                    "4":"EXPLICATION CYBER","5":"ANALYSE IP/DOMAINE",
+                    "6":"RAPPORT OSINT",
+                }
+                section(f"WormGPT — {mode_labels.get(c,'REPONSE')}", LR)
+                display_response(reply, tokens)
+                try:
+                    sv = input(LY + "  Sauvegarder en .txt? [y/N] > ").strip().lower()
+                    if sv == "y":
+                        fname = f"wormgpt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                        with open(fname, "w", encoding="utf-8") as f:
+                            f.write(f"WormGPT — {mode_labels.get(c,'REPONSE')}\n")
+                            f.write(f"Date: {datetime.now()}\nInput: {user_input}\n")
+                            f.write("="*60 + "\n\n" + reply + "\n")
+                        print(LG + f"  Sauvegarde: {fname}")
+                except Exception: pass
+            else:
+                handle_error(r)
+        except requests.exceptions.ConnectionError:
+            print(LR + "  Connexion impossible a api.wrmgpt.com")
+        except Exception as ex:
+            print(LR + f"  Erreur: {ex}")
+    else:
+        print(LR + "  Option invalide.")
+
+    print()
+    print(LC + "  WormGPT : https://chat.wrmgpt.com")
+    print(LC + "  Cle configurable via option 98 (Gestionnaire cles API)")
+    pause()
+
+
+# ──────────────────────────────────────────────
+#  GESTIONNAIRE DE CLES API
+#  Option 98 — gere config.ini automatiquement
+# ──────────────────────────────────────────────
+
+def api_key_manager():
+    global LEAKCHECK_KEY, BREACHDIR_KEY, SHODAN_KEY, HUNTER_KEY, VIRUSTOTAL_KEY, WORMGPT_KEY
+    show_logo("hash")
+    print(LG + "  Gestionnaire de cles API — config.ini\n")
+    print(LG + f"  Fichier config : {CONFIG_FILE}\n")
+
+    # Statut actuel des clés
+    keys_status = [
+        ("LeakCheck",       "leakcheck_key",       LEAKCHECK_KEY,  "https://leakcheck.io"),
+        ("BreachDirectory", "breachdirectory_key",  BREACHDIR_KEY,  "https://rapidapi.com/rohan-patra/api/breachdirectory"),
+        ("Shodan",          "shodan_key",            SHODAN_KEY,     "https://account.shodan.io/register"),
+        ("Hunter.io",       "hunter_key",            HUNTER_KEY,     "https://hunter.io/users/sign_up"),
+        ("VirusTotal",      "virustotal_key",        VIRUSTOTAL_KEY, "https://www.virustotal.com/gui/join-us"),
+        ("WormGPT",         "wormgpt_key",           WORMGPT_KEY,    "https://chat.wrmgpt.com"),
     ]
 
-    bar("  Preparing scan", 20, 0.012, LM, M)
-    print(LM + f"\n  Scanning {len(EXTENDED_SITES)} platforms for '{user_id}'...\n")
-
-    found = []
-    def chk(item):
-        name, url = item[0], item[1].format(user_id) if "{}" in item[1] else item[1]
-        try:
-            r = requests.get(url, timeout=7, allow_redirects=True,
-                             headers={"User-Agent": "Mozilla/5.0"})
-            return ("FOUND" if r.status_code == 200 else "·", name, url)
-        except:
-            return ("ERR", name, url)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
-        results = list(ex.map(chk, EXTENDED_SITES))
-
-    for status, name, url in results:
-        if status == "FOUND":
-            print(LG + f"  [+]  {name:<22}" + LW + f" {url}")
-            found.append(url)
-        elif status == "ERR":
-            print(DIM+C + f"  [?]  {name}")
+    section("STATUT DES CLES API", LG)
+    print(LG + f"  {'SERVICE':<20} {'STATUT':<15} {'INSCRIPTION (GRATUITE)'}")
+    print(LG + "  " + "-"*70)
+    for name, cfg_name, val, url in keys_status:
+        if val:
+            masked = val[:4] + "*" * (len(val) - 8) + val[-4:] if len(val) > 8 else "****"
+            print(LG + f"  {name:<20} " + LG + f"[OK] {masked:<10} " + DIM + url)
         else:
-            print(DIM+W + f"  [ ]  {name}")
+            print(LY + f"  {name:<20} " + LR + f"[MANQUANTE]      " + DIM + url)
 
-    section(f"RESULTS  —  {len(found)} FOUND  /  {len(EXTENDED_SITES)} CHECKED", LM)
+    print()
+    print(LW + "  1  Ajouter / modifier une cle")
+    print(LW + "  2  Voir le fichier config complet")
+    print(LW + "  3  Reinitialiser la config")
+    print(LW + "  4  Ouvrir le dossier config")
+    print(LW + "  5  Guide d'obtention des cles\n")
+    c = input(LG + "  Choice > ").strip()
+
+    if c == "1":
+        section("MODIFICATION DE CLE", LG)
+        for i, (name, cfg_name, val, url) in enumerate(keys_status, 1):
+            status = LG+"[OK]" if val else LR+"[VIDE]"
+            print(f"  {i}  {name:<20} {status}")
+        print()
+        try:
+            idx = int(input(LG + "  Choisis le service (numero) > ").strip()) - 1
+            if not 0 <= idx < len(keys_status):
+                print(LR + "  Numero invalide."); pause(); return
+            name, cfg_name, old_val, url = keys_status[idx]
+            print(LY + f"\n  Service  : {name}")
+            print(LY + f"  Lien     : {url}")
+            if old_val:
+                print(LY + f"  Cle actuelle : {old_val[:4]}...{old_val[-4:]}")
+            new_key = input(LG + f"\n  Nouvelle cle {name} > ").strip()
+            if not new_key:
+                print(LY + "  Aucune modification."); pause(); return
+            save_key(cfg_name, new_key)
+            # Mise a jour en memoire — active immediatement
+            if   cfg_name == "leakcheck_key":       LEAKCHECK_KEY  = new_key
+            elif cfg_name == "breachdirectory_key": BREACHDIR_KEY  = new_key
+            elif cfg_name == "shodan_key":           SHODAN_KEY     = new_key
+            elif cfg_name == "hunter_key":           HUNTER_KEY     = new_key
+            elif cfg_name == "virustotal_key":       VIRUSTOTAL_KEY = new_key
+            elif cfg_name == "wormgpt_key":          WORMGPT_KEY    = new_key
+            print(LG + f"\n  [OK]  Cle {name} sauvegardee dans config.ini")
+            print(LG + f"  [OK]  Active immediatement — ne sera plus jamais redemandee")
+        except (ValueError, IndexError):
+            print(LR + "  Entree invalide.")
+
+    elif c == "2":
+        section("CONTENU DU FICHIER CONFIG", LG)
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                for line in f.readlines():
+                    # Masquer les vraies clés à l'affichage
+                    if "=" in line and not line.strip().startswith("#"):
+                        k, _, v = line.partition("=")
+                        v = v.strip()
+                        if v and len(v) > 8:
+                            v_display = v[:4] + "****" + v[-4:]
+                        elif v:
+                            v_display = "****"
+                        else:
+                            v_display = "(vide)"
+                        print(LC + f"  {k.strip():<25} = {v_display}")
+                    else:
+                        print(DIM + LW + f"  {line.rstrip()}")
+        except Exception as ex:
+            print(LR + f"  Erreur lecture: {ex}")
+
+    elif c == "3":
+        confirm = input(LR + "  Reinitialiser config.ini? Toutes les cles seront effacees. [oui/non] > ").strip().lower()
+        if confirm == "oui":
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                f.write(CONFIG_TEMPLATE)
+            LEAKCHECK_KEY = BREACHDIR_KEY = SHODAN_KEY = HUNTER_KEY = VIRUSTOTAL_KEY = WORMGPT_KEY = ""
+            print(LG + "  [OK]  Config reinitialise.")
+        else:
+            print(LY + "  Annule.")
+
+    elif c == "4":
+        folder = os.path.dirname(CONFIG_FILE)
+        print(LG + f"\n  Dossier config : {folder}")
+        print(LG + f"  Fichier        : {CONFIG_FILE}")
+        try:
+            if sys.platform == "win32":
+                os.startfile(folder)
+            elif IS_TERMUX:
+                subprocess.run(["termux-open", folder], timeout=5)
+            else:
+                subprocess.run(["xdg-open", folder], timeout=5)
+        except Exception:
+            print(LY + "  Ouvre manuellement le fichier ci-dessus.")
+
+    elif c == "5":
+        section("GUIDE D'OBTENTION DES CLES GRATUITES", LG)
+        guides = [
+            ("LeakCheck",       "https://leakcheck.io",
+             "1. Va sur leakcheck.io\n"
+             "  2. Clique Sign Up (email suffit)\n"
+             "  3. Verifie ton email\n"
+             "  4. Dashboard > API > copie ta cle\n"
+             "  => Free : 50 req/mois, 7.5B records"),
+            ("BreachDirectory", "https://rapidapi.com/rohan-patra/api/breachdirectory",
+             "1. Va sur rapidapi.com, cree un compte\n"
+             "  2. Cherche 'breachdirectory'\n"
+             "  3. Clique Subscribe > plan Basic (gratuit)\n"
+             "  4. Ta cle est dans 'X-RapidAPI-Key'\n"
+             "  => Free : 50 req/mois"),
+            ("Shodan",          "https://account.shodan.io/register",
+             "1. Cree un compte sur shodan.io\n"
+             "  2. Mon compte > API Key\n"
+             "  => Free : scan 1 IP, recherches limitees"),
+            ("Hunter.io",       "https://hunter.io/users/sign_up",
+             "1. Cree un compte sur hunter.io\n"
+             "  2. Dashboard > API\n"
+             "  => Free : 25 req/mois, recherche email"),
+            ("VirusTotal",      "https://www.virustotal.com/gui/join-us",
+             "1. Cree un compte sur virustotal.com\n"
+             "  2. Profil > API Key\n"
+             "  => Free : 500 req/jour, 4 req/min"),
+            ("WormGPT",         "https://chat.wrmgpt.com",
+             "1. Va sur chat.wrmgpt.com\n"
+             "  2. Cree un compte gratuit\n"
+             "  3. Dashboard > API Key > copie ta cle\n"
+             "  => Cle sauvegardee automatiquement des la 1ere utilisation"),
+        ]
+        for name, url, guide in guides:
+            print(LG + f"\n  [{name}]")
+            print(LC + f"  URL : {url}")
+            print(LW + f"  {guide}\n")
+            print(LG + "  " + "-"*50)
+
     pause()
 
-
-# ──────────────────────────────────────────────
-#  HTTP STRESS TESTER  (legitimate load test only)
-# ──────────────────────────────────────────────
-
-def http_stress_test():
-    show_logo("port")
-    print(LY + "  HTTP load / stress tester for YOUR OWN servers.")
-    print(LY + "  Only use on infrastructure you own or have written permission to test.\n")
-
-    url = input(LY + "  Target URL (your own server) > ").strip()
-    if not url: pause(); return
-    if not url.startswith("http"): url = "https://" + url
-
-    try:
-        n_threads = int(input(LY + "  Threads (default 10) > ").strip() or "10")
-        n_req     = int(input(LY + "  Total requests (default 100) > ").strip() or "100")
-    except Exception:
-        n_threads, n_req = 10, 100
-
-    confirm = input(LR + f"\n  Confirm you own {url} and have permission to test [yes/no] > ").strip().lower()
-    if confirm != "yes":
-        print(LY + "  Cancelled — only test your own servers."); pause(); return
-
-    import threading as _thr
-    stats = {"ok": 0, "fail": 0, "times": []}
-    lock  = _thr.Lock()
-
-    def worker(count):
-        session = requests.Session()
-        session.headers["User-Agent"] = "LoadTest/camzzz"
-        for _ in range(count):
-            t0 = time.perf_counter()
-            try:
-                r = session.get(url, timeout=5)
-                with lock:
-                    stats["ok"] += 1
-                    stats["times"].append(time.perf_counter() - t0)
-            except Exception:
-                with lock:
-                    stats["fail"] += 1
-
-    per_thread = n_req // n_threads
-    remain     = n_req  % n_threads
-    start      = time.time()
-
-    bar("  Sending requests", 30, 0.01, LY, Y)
-
-    threads = []
-    for i in range(n_threads):
-        cnt = per_thread + (1 if i < remain else 0)
-        t = _thr.Thread(target=worker, args=(cnt,))
-        t.start(); threads.append(t)
-    for t in threads: t.join()
-
-    elapsed = time.time() - start
-    section("RESULTS", LY)
-    row("Total requests", n_req,          LY, LW)
-    row("Success",        stats["ok"],    LY, LG)
-    row("Failed",         stats["fail"],  LY, LR if stats["fail"] else LG)
-    row("Duration",       f"{elapsed:.2f}s", LY, LW)
-    row("Req/sec",        f"{n_req/elapsed:.0f}", LY, LW)
-    if stats["times"]:
-        avg = sum(stats["times"]) / len(stats["times"])
-        row("Avg response",  f"{avg*1000:.1f}ms", LY, LW)
-        row("Min response",  f"{min(stats['times'])*1000:.1f}ms", LY, LW)
-        row("Max response",  f"{max(stats['times'])*1000:.1f}ms", LY, LW)
-    pause()
-
-
-# ──────────────────────────────────────────────
-#  OSINT DORK GENERATOR  (AltTool menu 18 — enhanced)
-# ──────────────────────────────────────────────
-
-def osint_dork_builder():
-    show_logo("dork")
-    print(LY + "  Advanced OSINT dork builder — generates targeted Google dorks.\n")
-
-    print(LY + "  Enter target info (leave blank to skip):")
-    first    = input(LY + "  First name   > ").strip()
-    last     = input(LY + "  Last name    > ").strip()
-    username = input(LY + "  Username     > ").strip()
-    email    = input(LY + "  Email        > ").strip()
-    phone    = input(LY + "  Phone        > ").strip()
-    domain   = input(LY + "  Domain/site  > ").strip()
-    company  = input(LY + "  Company      > ").strip()
-    city     = input(LY + "  City         > ").strip()
-
-    dorks = []
-    E = qenc
-
-    names = []
-    if first and last: names.append(f"{first} {last}")
-    if first:          names.append(first)
-    if last:           names.append(last)
-
-    if names:
-        for n in names:
-            dorks += [
-                (f"Name basic",          f'"{n}"'),
-                (f"Name + company",      f'"{n}" "{company}"' if company else None),
-                (f"Name + city",         f'"{n}" "{city}"'    if city    else None),
-                (f"LinkedIn",            f'site:linkedin.com "{n}"'),
-                (f"Twitter/X",           f'site:twitter.com "{n}"'),
-                (f"Facebook",            f'site:facebook.com "{n}"'),
-                (f"Instagram",           f'site:instagram.com "{n}"'),
-                (f"GitHub",              f'site:github.com "{n}"'),
-                (f"News",                f'"{n}" (news OR article OR press)'),
-                (f"Resume/CV",           f'"{n}" (resume OR cv) filetype:pdf'),
-            ]
-
-    if username:
-        dorks += [
-            ("Username basic",       f'"{username}"'),
-            ("Username profile",     f'"{username}" (profile OR account)'),
-            ("Username inurl",       f'inurl:{username}'),
-        ]
-
-    if email:
-        ed = email.split("@")[1] if "@" in email else ""
-        dorks += [
-            ("Email basic",         f'"{email}"'),
-            ("Email not domain",    f'"{email}" -site:{ed}' if ed else None),
-            ("Email breach",        f'"{email}" (breach OR leak OR dump)'),
-            ("Email pastebin",      f'site:pastebin.com "{email}"'),
-            ("Email github",        f'site:github.com "{email}"'),
-        ]
-
-    if phone:
-        clean = re.sub(r"\D", "", phone)
-        dorks += [
-            ("Phone basic",         f'"{phone}"'),
-            ("Phone digits",        f'"{clean}"'),
-            ("Phone pastebin",      f'site:pastebin.com "{phone}"'),
-        ]
-
-    if domain:
-        dorks += [
-            ("Domain all pages",    f'site:{domain}'),
-            ("Domain subdomains",   f'site:*.{domain}'),
-            ("Domain login",        f'site:{domain} inurl:login OR inurl:admin'),
-            ("Domain config",       f'site:{domain} ext:env OR ext:cfg OR ext:sql'),
-            ("Domain docs",         f'site:{domain} ext:pdf OR ext:doc OR ext:xls'),
-            ("Domain open dirs",    f'site:{domain} intitle:"index of"'),
-            ("Domain emails",       f'site:{domain} intext:@{domain}'),
-            ("Domain github",       f'site:github.com "{domain}"'),
-            ("Domain pastebin",     f'site:pastebin.com "{domain}"'),
-            ("Domain AWS S3",       f'site:s3.amazonaws.com "{domain}"'),
-            ("Domain API keys",     f'site:{domain} (apikey OR api_key OR token)'),
-            ("Domain backup files", f'site:{domain} ext:bak OR ext:old OR ext:backup'),
-            ("Domain cache",        f'cache:{domain}'),
-        ]
-
-    if company:
-        dorks += [
-            ("Company LinkedIn",    f'site:linkedin.com "{company}"'),
-            ("Company employees",   f'"{company}" (employees OR staff OR team)'),
-            ("Company documents",   f'"{company}" filetype:pdf'),
-        ]
-
-    # filter None
-    dorks = [(k, v) for k, v in dorks if v]
-
-    section(f"GENERATED {len(dorks)} DORKS", LY)
-    for desc, dork in dorks:
-        print(LY + f"  {desc:<28}" + LW +
-              f" https://www.google.com/search?q={E(dork)}")
-
-    # export
-    try:
-        save = input(LY + "\n  Export dorks to txt? [y/N] > ").strip().lower()
-        if save == "y":
-            fname = f"dorks_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            with open(fname, "w") as f:
-                f.write(f"OSINT Dorks — By camzzz\n{'='*60}\n\n")
-                for desc, dork in dorks:
-                    f.write(f"# {desc}\nhttps://www.google.com/search?q={E(dork)}\n\n")
-            print(LG + f"  Saved to {fname}")
-    except Exception: pass
-    pause()
-
-
-# ──────────────────────────────────────────────
-#  UPDATED MENU
-# ──────────────────────────────────────────────
 
 MENU = """
-╔══════════════════════════════════╗  ╔══════════════════════════════════╗  ╔══════════════════════════════════╗
-║         NETWORK / IP             ║  ║          WEB / DOMAIN            ║  ║       PHONE / MAIL / BREACH      ║
-╠══════════════════════════════════╣  ╠══════════════════════════════════╣  ╠══════════════════════════════════╣
-║ (1)   IP Info & Tracker          ║  ║ (11)  HTTP Header Inspector      ║  ║ (21)  Phone Number Info          ║
-║ (2)   DNS Lookup                 ║  ║ (12)  SSL Certificate Inspector  ║  ║ (22)  Phone Social Scanner       ║
-║ (3)   Port Scanner               ║  ║ (13)  Tech Detector              ║  ║ (23)  Mail / Email OSINT         ║
-║ (4)   Geo IP Tracker             ║  ║ (14)  URL Redirect Tracer        ║  ║ (24)  Email Account Checker      ║
-║ (5)   Network Info               ║  ║ (15)  Robots / Sitemap Reader    ║  ║ (25)  Breach Search Engine       ║
-║ (6)   WHOIS / Reverse DNS        ║  ║ (16)  Wayback Machine            ║  ║       ZSearcher / OathNet / HIBP ║
-║ (7)   Subdomain Finder           ║  ║ (17)  Wayback URL Extractor      ║  ║ (26)  Username Tracker [55+]     ║
-║ (8)   ASN / BGP Lookup           ║  ║ (18)  Google Dork Generator      ║  ║ (27)  ID / Username Tracker Ext  ║
-║ (9)   Quick Recon (all-in-one)   ║  ║ (19)  OSINT Dork Builder         ║  ║ (28)  Profile Builder            ║
-║ (10)  IP Range Scanner           ║  ║ (20)  File / Doc OSINT           ║  ║ (29)  Reverse Image Search       ║
-╚══════════════════════════════════╝  ╚══════════════════════════════════╝  ║ (30)  Social Media Search        ║
-                                                                            ║ (31)  Public Records Search      ║
-                                                                            ║ (32)  Paste Search               ║
-                                                                            ╚══════════════════════════════════╝
+  +---------------------------------+  +---------------------------------+  +---------------------------------+
+  |        NETWORK / IP             |  |        WEB / DOMAIN             |  |    PHONE / MAIL / BREACH        |
+  +---------------------------------+  +---------------------------------+  +---------------------------------+
+  | (1)  IP Info & Tracker          |  | (11) HTTP Header Inspector      |  | (21) Phone Number Info          |
+  | (2)  DNS Lookup                 |  | (12) SSL Certificate Inspector  |  | (22) Phone Social Scanner       |
+  | (3)  Port Scanner               |  | (13) Tech Detector              |  | (23) Mail / Email OSINT         |
+  | (4)  Geo IP Tracker             |  | (14) URL Redirect Tracer        |  | (24) Email Account Checker      |
+  | (5)  Network Info               |  | (15) Robots / Sitemap Reader    |  | (25) Breach Search Engine       |
+  | (6)  WHOIS / Reverse DNS        |  | (16) Wayback Machine            |  | (26) Username Tracker [55+]     |
+  | (7)  Subdomain Finder           |  | (17) Wayback URL Extractor      |  | (27) Profile Builder            |
+  | (8)  ASN / BGP Lookup           |  | (18) Google Dork Generator      |  | (28) Reverse Image Search       |
+  | (9)  Quick Recon (all-in-one)   |  | (19) Advanced Dork Builder      |  | (29) Social Media Search        |
+  | (10) IP Range Scanner           |  | (20) File / Doc OSINT           |  | (30) Public Records Search      |
+  +---------------------------------+  +---------------------------------+  | (31) Paste Search               |
+                                                                            | (32) Public Camera Feeds        |
+  +---------------------------------+  +---------------------------------+  +---------------------------------+
+  |    OUTILS RESEAU / AVANCES      |  |    PENTEST / VULN / SCAN        |
+  +---------------------------------+  +---------------------------------+  +---------------------------------+
+  | (40) Traceroute (pure Python)   |  | (50) Web Vuln Scanner           |  |    PASSWORD / HASH / TOOLS      |
+  | (41) Banner Grabber             |  | (51) Firewall / WAF Detector    |  +---------------------------------+
+  | (42) MAC Vendor Lookup          |  | (52) WiFi Scanner               |  | (60) Password Generator/Tester  |
+  | (43) HTTP Method Tester         |  | (53) File Scanner (AV basic)    |  | (61) Hash Tools                 |
+  | (44) CORS Checker               |  | (54) OSINT Dork Builder         |  | (62) Metadata Extractor         |
+  | (45) Tor Exit Node Check        |  | (55) CORS Checker               |  | (63) Shodan / Censys Links      |
+  | (46) DNS Brute Force (ext.)     |  | (56) HTTP Method Tester         |  | (64) CVE / Vuln Search          |
+  | (47) Dark Web Search Links      |  +---------------------------------+  | (65) Archive Links              |
+  | (48) Dark Web Search            |                                        | (66) OSINT Framework Navigator  |
+  | (49) ASN / BGP Lookup           |  +---------------------------------+  | (67) URL Redirect Tracer        |
+  +---------------------------------+  |  APIS BREACH AVEC CLE (GRATUIT) |  | (68) Dark Web Search            |
+                                       +---------------------------------+  | (69) XposedOrNot API [DIRECT]   |
+  +---------------------------------+  | (70) LeakCheck API [7.5B+]      |  +---------------------------------+
+  |  OUTILS OPEN SOURCE RECONNUS   |  | (71) BreachDirectory API        |
+  +---------------------------------+  +---------------------------------+  (0) Exit    (99) Contact
+  | (80) Hub Outils Open Source     |
+  | (81) Holehe  (email 120+ sites) |  +---------------------------------+
+  | (82) h8mail  (breach hunting)   |  |      IA INTEGREE                |
+  | (83) Sherlock (user 400+ sites) |  +---------------------------------+
+  | (84) theHarvester (recon dom.)  |  | (90) WormGPT  [chat.wrmgpt.com] |
+  | (85) Maigret (user 3000+ sites) |  |      Chat / OSINT / Dorks /     |
+  +---------------------------------+  |      Breach / Rapports          |
+                                       +---------------------------------+
 
-╔══════════════════════════════════╗  ╔══════════════════════════════════╗  ╔══════════════════════════════════╗
-║       INTEL / ADVANCED           ║  ║     PENTEST / VULN / SCAN        ║  ║        PASSWORD / HASH           ║
-╠══════════════════════════════════╣  ╠══════════════════════════════════╣  ╠══════════════════════════════════╣
-║ (33)  Shodan / Censys Links      ║  ║ (43)  Web Vuln Scanner (20 chk)  ║  ║ (50)  Password Generator/Tester  ║
-║ (34)  CVE / Vuln Search          ║  ║ (44)  Firewall / WAF Detector    ║  ║ (51)  Hash Tools                 ║
-║ (35)  Archive & Screenshot Links ║  ║ (45)  WiFi Scanner               ║  ║ (52)  Metadata Extractor         ║
-║ (36)  OSINT Framework Navigator  ║  ║ (46)  File Scanner (AV basic)    ║  ║ (53)  File Scanner (AV)          ║
-║ (37)  Dark Web Search Links      ║  ║ (47)  HTTP Stress Tester (own)   ║  ╚══════════════════════════════════╝
-║ (38)  Public Camera Feeds        ║  ╚══════════════════════════════════╝
-║ (39)  Wayback URL Extractor      ║
-║ (40)  Quick Recon (domain)       ║      (0) Exit
-║ (41)  Reverse Image Search       ║
-║ (42)  Social Media Search        ║
-╚══════════════════════════════════╝
+  (98) Gestionnaire cles API [config.ini]
 """
 
 DISPATCH = {
@@ -3150,7 +3713,7 @@ DISPATCH = {
     "7":  subdomain_finder,
     "8":  asn_lookup,
     "9":  quick_recon,
-    "10": ip_info,
+    "10": ip_info,   # IP range — inside ip_info option 4
     "11": header_inspector,
     "12": ssl_inspector,
     "13": tech_detector,
@@ -3159,7 +3722,7 @@ DISPATCH = {
     "16": wayback,
     "17": wayback_urls,
     "18": dork_gen,
-    "19": osint_dork_builder,
+    "19": adv_dork,
     "20": file_osint,
     "21": phone_info,
     "22": phone_social_scanner,
@@ -3167,33 +3730,56 @@ DISPATCH = {
     "24": email_account_checker,
     "25": breach_engine,
     "26": username_tracker,
-    "27": id_tracker,
-    "28": profile_builder,
-    "29": reverse_image,
-    "30": social_search,
-    "31": public_records,
-    "32": paste_search,
-    "33": shodan_links,
-    "34": vuln_search,
-    "35": archive_links,
-    "36": osint_framework,
-    "37": darkweb_search,
-    "38": public_cameras,
-    "39": wayback_urls,
-    "40": quick_recon,
-    "41": reverse_image,
-    "42": social_search,
-    "43": web_vuln_scanner,
-    "44": firewall_detector,
-    "45": wifi_scanner,
-    "46": file_scanner,
-    "47": http_stress_test,
-    "50": password_tools,
-    "51": hash_tools,
-    "52": metadata_extractor,
+    "27": profile_builder,
+    "28": reverse_image,
+    "29": social_search,
+    "30": public_records,
+    "31": paste_search,
+    "32": public_cameras,
+    "35": file_osint,
+    # Nouveaux outils reseau
+    "40": traceroute,
+    "41": banner_grab,
+    "42": mac_lookup,
+    "43": http_method_tester,
+    "44": cors_checker,
+    "45": tor_check,
+    "46": subdomain_finder,  # brute force étendu
+    "47": darkweb_search,
+    "48": darkweb_search,
+    "49": asn_lookup,
+    # Pentest
+    "50": web_vuln_scanner,
+    "51": firewall_detector,
+    "52": wifi_scanner,
     "53": file_scanner,
-    "48": contact,
-    "49": fsociety,
+    "54": osint_dork_builder,
+    "55": cors_checker,
+    "56": http_method_tester,
+    # Password / hash
+    "60": password_tools,
+    "61": hash_tools,
+    "62": metadata_extractor,
+    "63": shodan_links,
+    "64": vuln_search,
+    "65": archive_links,
+    "66": osint_framework,
+    "67": url_tracer,
+    "68": darkweb_search,
+    "69": xposedornot,
+    # APIs breach avec clé gratuite
+    "70": leakcheck_api,
+    "71": breachdirectory_api,
+    # Outils open source
+    "80": open_source_hub,
+    "81": holehe_tool,
+    "82": h8mail_tool,
+    "83": sherlock_tool,
+    "84": theharvester_tool,
+    "85": maigret_tool,
+    "90": wormgpt_tool,
+    "98": api_key_manager,
+    "99": contact,
 }
 
 # ──────────────────────────────────────────────
@@ -3208,10 +3794,10 @@ if __name__ == "__main__":
         print(LG + MENU)
         choice = input(LG + "  Select module > ").strip()
         if choice in ["0","00"]:
-            clear(); matrix_rain(5, 72); print()
-            for line in CAMZZZ_LINES: rainbow(line)
+            clear()
+            for line in CAMZZZ_LINES: rainbow("  " + line)
             print()
-            print(LG + "  Goodbye — By camzzz")
+            print(LG + "  Goodbye -- By camzzz")
             time.sleep(0.8); break
         fn = DISPATCH.get(choice)
         if fn:
